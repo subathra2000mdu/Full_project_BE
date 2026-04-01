@@ -2,7 +2,7 @@ const { jsPDF } = require("jspdf");
 const autoTable = require("jspdf-autotable").default; 
 const Booking = require('../models/Booking');
 
-// 1. Create Reservation
+
 exports.createBooking = async (req, res) => {
   try {
     const { flightId, passengerName, passengerEmail, seatPreference } = req.body;
@@ -26,7 +26,7 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-// 2. Get User History (Renamed to match router)
+
 exports.getMyBookings = async (req, res) => {
   try {
     const history = await Booking.find({ user: req.user.id }).populate('flight');
@@ -36,7 +36,7 @@ exports.getMyBookings = async (req, res) => {
   }
 };
 
-// 3. Cancel Booking
+
 exports.cancelBooking = async (req, res) => {
   try {
     await Booking.findByIdAndDelete(req.params.id);
@@ -46,7 +46,7 @@ exports.cancelBooking = async (req, res) => {
   }
 };
 
-// 4. Admin Stats
+
 exports.getBookingStats = async (req, res) => {
   try {
     const total = await Booking.countDocuments();
@@ -56,13 +56,10 @@ exports.getBookingStats = async (req, res) => {
   }
 };
 
-// controllers/bookingController.js
-
 exports.cancelBooking = async (req, res) => {
     try {
         const bookingId = req.params.id;
 
-        // Find the booking and delete it
         const deletedBooking = await Booking.findByIdAndDelete(bookingId);
 
         if (!deletedBooking) {
@@ -80,13 +77,13 @@ exports.cancelBooking = async (req, res) => {
         });
     }
 };
-// Add this to your existing bookingController.js
+
+
 exports.updateBooking = async (req, res) => {
     try {
         const { id } = req.params;
         const { passengerName, seatPreference } = req.body;
 
-        // Find the booking and update only the provided fields
         const updatedBooking = await Booking.findByIdAndUpdate(
             id,
             { 
@@ -117,11 +114,9 @@ exports.downloadItinerary = async (req, res) => {
 
         const doc = new jsPDF();
 
-        // Header
         doc.setFontSize(20);
         doc.text("FLIGHT ITINERARY", 105, 20, { align: "center" });
 
-        // Data for the table
         const tableData = [
             ["Booking Ref", booking.bookingReference],
             ["Passenger", booking.passengerDetails.name],
@@ -132,7 +127,6 @@ exports.downloadItinerary = async (req, res) => {
             ["Status", booking.paymentStatus]
         ];
 
-        // FIX: Use the autoTable variable directly on the doc instance
         autoTable(doc, {
             startY: 40,
             head: [['Description', 'Details']],

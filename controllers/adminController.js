@@ -4,7 +4,6 @@ exports.getDashboardStats = async (req, res) => {
     try {
         const totalBookings = await Booking.countDocuments();
         
-        // Find most popular destinations
         const popularRoutes = await Booking.aggregate([
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'details' } },
             { $unwind: '$details' },

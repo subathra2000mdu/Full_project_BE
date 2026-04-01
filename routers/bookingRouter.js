@@ -11,7 +11,6 @@ const {
 
 const authMiddleware = require('../middleware/authMiddleware'); 
 
-// All routes are protected by JWT authMiddleware
 router.post('/reserve', authMiddleware, createBooking); 
 router.get('/my-history', authMiddleware, getMyBookings);
 router.delete('/cancel/:id', authMiddleware, cancelBooking);
