@@ -4,17 +4,16 @@ const {
     createBooking, 
     getMyBookings, 
     cancelBooking,
-    getBookingStats
+    getBookingStats,
+    updateBooking
 } = require('../controllers/bookingController');
 
 const authMiddleware = require('../middleware/authMiddleware'); 
 
+// All routes are protected by JWT authMiddleware
 router.post('/reserve', authMiddleware, createBooking); 
-
 router.get('/my-history', authMiddleware, getMyBookings);
-
 router.delete('/cancel/:id', authMiddleware, cancelBooking);
-
 router.get('/admin/analytics', authMiddleware, getBookingStats);
-
+router.patch('/update/:id', authMiddleware, updateBooking);
 module.exports = router;

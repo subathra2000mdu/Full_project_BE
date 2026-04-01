@@ -7,7 +7,6 @@ const {
     addFlight 
 } = require('../controllers/flightController');
 
-
 router.get('/search', searchFlights);
 router.get('/', getAllFlights);
 router.post('/add', addFlight);
