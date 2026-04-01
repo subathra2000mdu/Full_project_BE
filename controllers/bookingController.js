@@ -6,6 +6,14 @@ const Booking = require('../models/Booking');
 exports.createBooking = async (req, res) => {
   try {
     const { flightId, passengerName, passengerEmail, seatPreference } = req.body;
+    
+    const FLIGHT_CAPACITY = 150; 
+    const currentBookedCount = await Booking.countDocuments({ flight: flightId });
+    if (currentBookedCount >= FLIGHT_CAPACITY) {
+      return res.status(400).json({ 
+        message: "Booking Failed: This flight has no more available seats." 
+      });
+    }
 
     const newBooking = new Booking({
       user: req.user.id,
