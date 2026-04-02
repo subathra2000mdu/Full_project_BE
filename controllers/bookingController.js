@@ -36,7 +36,6 @@ exports.updateBooking = async (req, res) => {
         const { id } = req.params;
         const { paymentStatus } = req.body;
 
-        // CRITICAL FIX: populate('flight') fetches the Name, Price, and Locations 
         const updatedBooking = await Booking.findByIdAndUpdate(
             id, 
             { paymentStatus }, 
@@ -47,7 +46,6 @@ exports.updateBooking = async (req, res) => {
             return res.status(404).json({ message: "Booking not found" });
         }
 
-        // Send the email (Handles Booked, Paid, or Cancelled automatically)
         await sendBookingEmail(updatedBooking.passengerDetails.email, updatedBooking);
 
         res.status(200).json({ 

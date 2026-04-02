@@ -2,13 +2,10 @@ const Booking = require('../models/Booking');
 const History = require('../models/History');
 const CancellationHistory = require('../models/CancellationHistory');
 
-// 1. Get Dashboard Statistics
 exports.getDashboardStats = async (req, res) => {
     try {
-        // Total Activity Count
         const totalBookings = await Booking.countDocuments();
         
-        // Popular Routes (Aggregating destinations)
         const popularRoutes = await Booking.aggregate([
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'details' } },
             { $unwind: '$details' },
@@ -17,7 +14,6 @@ exports.getDashboardStats = async (req, res) => {
             { $limit: 5 }
         ]);
 
-        // Sales Performance (Completed payments only)
         const salesStats = await Booking.aggregate([
             { $match: { paymentStatus: 'Completed' } }, 
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'flightInfo' } },
@@ -32,11 +28,9 @@ exports.getDashboardStats = async (req, res) => {
             }
         ]);
 
-        // Cancellation Rate Calculation
         const cancelledCount = await Booking.countDocuments({ paymentStatus: 'Cancelled' });
         const cancellationRate = totalBookings > 0 ? (cancelledCount / totalBookings) * 100 : 0;
 
-        // Cancelled Revenue Logic (Calculating lost value)
         const cancelledStats = await Booking.aggregate([
             { $match: { paymentStatus: 'Cancelled' } },
             { 
@@ -56,7 +50,6 @@ exports.getDashboardStats = async (req, res) => {
             }
         ]);
 
-        // Final Consolidated Response
         res.status(200).json({ 
             totalBookings, 
             popularRoutes,
@@ -73,7 +66,6 @@ exports.getDashboardStats = async (req, res) => {
     }
 };
 
-// 2. Get All Cancellation Specific Records
 exports.getAllCancellationHistory = async (req, res) => {
     try {
         const history = await CancellationHistory.find().sort({ cancelledAt: -1 });
@@ -83,15 +75,26 @@ exports.getAllCancellationHistory = async (req, res) => {
     }
 };
 
-// 3. Get Global Audit Logs (Visible histories in DB)
+const History = require('../models/History');
+
 exports.getGlobalHistory = async (req, res) => {
     try {
-        const allHistory = await History.find()
-            .populate('userId', 'name email')
-            .sort({ timestamp: -1 });
+        const daysAgo = 7; 
+        const dateLimit = new Date();
+        dateLimit.setDate(dateLimit.getDate() - daysAgo);
+
+        const allHistory = await History.find({
+           
+            'details.status': { $in: ['Cancelled', 'Completed'] },
+            
+            timestamp: { $gte: dateLimit }
+        })
+        .populate('userId', 'name email')
+        .sort({ timestamp: -1 }); 
 
         res.status(200).json(allHistory);
     } catch (err) {
-        res.status(500).json({ message: "Could not fetch history logs" });
+        console.error("History Fetch Error:", err);
+        res.status(500).json({ message: "Failed to fetch filtered history", error: err.message });
     }
 };

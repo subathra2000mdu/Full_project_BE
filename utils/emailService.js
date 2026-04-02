@@ -1,7 +1,6 @@
 const nodemailer = require('nodemailer');
 
 const sendBookingEmail = async (passengerEmail, bookingDetails) => {
-    // FIX: Define transporter outside the try block [Ref: image_26c843.png]
     const transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
@@ -13,19 +12,18 @@ const sendBookingEmail = async (passengerEmail, bookingDetails) => {
     try {
         const status = bookingDetails?.paymentStatus;
         
-        // Dynamic content based on status
         let statusText = "Booking Confirmation";
         let message = "Your flight has been successfully booked! See your itinerary below:";
-        let headerColor = "#007bff"; // Blue for Booking
+        let headerColor = "#007bff"; 
 
         if (status === 'Cancelled') {
-            statusText = "Cancellation Confirmed";
+            statusText = "Cancellation";
             message = "Your flight reservation has been successfully cancelled. Cancellation details are below:";
-            headerColor = "#d9534f"; // Red for Cancellation
+            headerColor = "#d9534f"; 
         } else if (status === 'Completed') {
             statusText = "Payment Received";
             message = "We have successfully received your payment. Your booking is now fully confirmed:";
-            headerColor = "#28a745"; // Green for Payment
+            headerColor = "#28a745"; 
         }
 
         const mailOptions = {
@@ -57,7 +55,6 @@ const sendBookingEmail = async (passengerEmail, bookingDetails) => {
         await transporter.sendMail(mailOptions);
         console.log(`Email for status [${status}] sent successfully to ${passengerEmail}`);
     } catch (error) {
-        // Fix: Prevents crash if 'name' is missing [Ref: image_f30ca2.png]
         console.error("Email failed to send:", error.message);
     }
 };
