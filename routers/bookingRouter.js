@@ -17,4 +17,5 @@ router.delete('/cancel/:id', authMiddleware, cancelBooking);
 router.get('/admin/analytics', authMiddleware, getBookingStats);
 router.patch('/update/:id', authMiddleware, updateBooking);
 router.get('/download/:id', authMiddleware, downloadItinerary);
+router.get('/history', authMiddleware, getMyBookings);
 module.exports = router;

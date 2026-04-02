@@ -8,7 +8,7 @@ const BookingSchema = new mongoose.Schema({
     email: { type: String, required: true }
   },
   seatPreference: { type: String }, 
-  paymentStatus: { type: String, enum: ['Pending', 'Completed'], default: 'Pending' }, 
+  paymentStatus: { type: String, enum: ['Pending', 'Completed','Cancelled'], default: 'Pending' }, 
   bookingReference: { 
     type: String, 
     unique: true, 

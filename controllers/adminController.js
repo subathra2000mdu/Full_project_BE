@@ -1,11 +1,14 @@
 const Booking = require('../models/Booking');
+const History = require('../models/History');
+const CancellationHistory = require('../models/CancellationHistory');
 
+// 1. Get Dashboard Statistics
 exports.getDashboardStats = async (req, res) => {
     try {
-        // 1. Total Activity Count
+        // Total Activity Count
         const totalBookings = await Booking.countDocuments();
         
-        // 2. Popular Routes (Top 5 Arrivals)
+        // Popular Routes (Aggregating destinations)
         const popularRoutes = await Booking.aggregate([
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'details' } },
             { $unwind: '$details' },
@@ -14,9 +17,28 @@ exports.getDashboardStats = async (req, res) => {
             { $limit: 5 }
         ]);
 
-        // 3. Sales Performance & Trends
+        // Sales Performance (Completed payments only)
         const salesStats = await Booking.aggregate([
             { $match: { paymentStatus: 'Completed' } }, 
+            { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'flightInfo' } },
+            { $unwind: '$flightInfo' },
+            { 
+                $group: {
+                    _id: null,
+                    totalRevenue: { $sum: '$flightInfo.price' },
+                    avgBookingValue: { $avg: '$flightInfo.price' },
+                    completedTransactions: { $sum: 1 }
+                }
+            }
+        ]);
+
+        // Cancellation Rate Calculation
+        const cancelledCount = await Booking.countDocuments({ paymentStatus: 'Cancelled' });
+        const cancellationRate = totalBookings > 0 ? (cancelledCount / totalBookings) * 100 : 0;
+
+        // Cancelled Revenue Logic (Calculating lost value)
+        const cancelledStats = await Booking.aggregate([
+            { $match: { paymentStatus: 'Cancelled' } },
             { 
                 $lookup: { 
                     from: 'flights', 
@@ -29,22 +51,18 @@ exports.getDashboardStats = async (req, res) => {
             { 
                 $group: {
                     _id: null,
-                    totalRevenue: { $sum: '$flightInfo.price' },
-                    avgBookingValue: { $avg: '$flightInfo.price' },
-                    completedTransactions: { $sum: 1 }
+                    totalCancelledAmount: { $sum: '$flightInfo.price' }
                 }
             }
         ]);
 
-        // 4. Cancellation Rate Calculation
-        const cancelledCount = await Booking.countDocuments({ paymentStatus: 'Cancelled' });
-        const cancellationRate = totalBookings > 0 ? (cancelledCount / totalBookings) * 100 : 0;
-
+        // Final Consolidated Response
         res.status(200).json({ 
             totalBookings, 
             popularRoutes,
             salesPerformance: salesStats[0] || { totalRevenue: 0, avgBookingValue: 0, completedTransactions: 0 },
-            cancellationRate: `${cancellationRate.toFixed(2)}%`
+            cancellationRate: `${cancellationRate.toFixed(2)}%`,
+            cancelledAmount: cancelledStats[0]?.totalCancelledAmount || 0 
         });
 
     } catch (err) {
@@ -52,5 +70,28 @@ exports.getDashboardStats = async (req, res) => {
             message: "Analytics Error", 
             error: err.message 
         });
+    }
+};
+
+// 2. Get All Cancellation Specific Records
+exports.getAllCancellationHistory = async (req, res) => {
+    try {
+        const history = await CancellationHistory.find().sort({ cancelledAt: -1 });
+        res.status(200).json(history);
+    } catch (err) {
+        res.status(500).json({ message: "Error fetching cancellation history" });
+    }
+};
+
+// 3. Get Global Audit Logs (Visible histories in DB)
+exports.getGlobalHistory = async (req, res) => {
+    try {
+        const allHistory = await History.find()
+            .populate('userId', 'name email')
+            .sort({ timestamp: -1 });
+
+        res.status(200).json(allHistory);
+    } catch (err) {
+        res.status(500).json({ message: "Could not fetch history logs" });
     }
 };

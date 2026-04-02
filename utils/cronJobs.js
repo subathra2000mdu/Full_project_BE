@@ -3,41 +3,60 @@ const axios = require('axios');
 const Booking = require('../models/Booking');
 const sendBookingEmail = require('./emailService');
 
+
 cron.schedule('0 * * * *', async () => {
-    console.log('--- Checking for Flight Status Updates ---');
+    console.log('--- [CRON] Starting Flight Status Sync ---');
 
     try {
         const upcomingBookings = await Booking.find({
             paymentStatus: 'Completed',
         }).populate('flight');
 
+        if (upcomingBookings.length === 0) {
+            return console.log('[CRON] No active bookings to track.');
+        }
+
         for (const booking of upcomingBookings) {
-            const flightNum = booking.flight.flightNumber;
+            try {
+                const flightNum = booking.flight.flightNumber;
 
-            const response = await axios.get(`${process.env.AVIATIONSTACK_BASE_URL}/flights`, {
-                params: {
-                    access_key: process.env.AVIATIONSTACK_KEY,
-                    flight_iata: flightNum
-                }
-            });
+                const response = await axios.get(`${process.env.AVIATIONSTACK_BASE_URL}/flights`, {
+                    params: {
+                        access_key: process.env.AVIATIONSTACK_KEY,
+                        flight_iata: flightNum
+                    },
+                    timeout: 5000 
+                });
 
-            const flightData = response.data.data[0];
+                const flightData = response.data?.data?.[0];
 
-            if (flightData) {
-                const currentStatus = flightData.flight_status; 
-                
-                if (currentStatus === 'delayed' || currentStatus === 'cancelled') {
-                    console.log(`Alert: Flight ${flightNum} is ${currentStatus}. Sending email...`);
+                if (flightData) {
+                    const currentStatus = flightData.flight_status; 
                     
-                    await sendBookingEmail(booking.passengerDetails.email, {
-                        ...booking._doc,
-                        updateType: 'Status Change',
-                        newStatus: currentStatus
-                    });
+                    if (currentStatus === 'delayed' || currentStatus === 'cancelled') {
+                        console.log(`[ALERT] Flight ${flightNum} is ${currentStatus}.`);
+                        
+                        await sendBookingEmail(booking.passengerDetails.email, {
+                            ...booking._doc,
+                            updateType: 'Status Change',
+                            newStatus: currentStatus
+                        });
+                    }
                 }
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+            } catch (innerError) {
+                console.error(`[CRON] Error tracking Flight ${booking.flight.flightNumber}:`, innerError.message);
+                
+                continue; 
             }
         }
+        console.log('--- [CRON] Sync Completed ---');
     } catch (error) {
-        console.error('Cron Job Error:', error.message);
+        console.error('--- [CRON] Critical Failure:', error.message);
     }
+}, {
+    scheduled: true,
+    timezone: "Asia/Kolkata"
 });
