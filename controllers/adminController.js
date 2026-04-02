@@ -1,5 +1,5 @@
 const Booking = require('../models/Booking');
-const History = require('../models/History');
+const History = require('../models/History'); // Only declare this once at the top
 const CancellationHistory = require('../models/CancellationHistory');
 
 exports.getDashboardStats = async (req, res) => {
@@ -75,8 +75,6 @@ exports.getAllCancellationHistory = async (req, res) => {
     }
 };
 
-const History = require('../models/History');
-
 exports.getGlobalHistory = async (req, res) => {
     try {
         const daysAgo = 7; 
@@ -84,9 +82,7 @@ exports.getGlobalHistory = async (req, res) => {
         dateLimit.setDate(dateLimit.getDate() - daysAgo);
 
         const allHistory = await History.find({
-           
             'details.status': { $in: ['Cancelled', 'Completed'] },
-            
             timestamp: { $gte: dateLimit }
         })
         .populate('userId', 'name email')
