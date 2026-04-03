@@ -3,7 +3,26 @@ const axios = require('axios');
 const Booking = require('../models/Booking');
 const sendBookingEmail = require('./emailService');
 
+// ════════════════════════════════════════════════════════════════════════════
+// NEW: KEEP-ALIVE CRON (Added to prevent Render sleep)
+// ════════════════════════════════════════════════════════════════════════════
+const RENDER_URL = process.env.RENDER_URL || 'https://flight-booking-p4qy.onrender.com';
 
+if (process.env.NODE_ENV === 'production') {
+    cron.schedule('*/14 * * * *', async () => {
+        try {
+            // Pings the /health endpoint we added to app.js
+            await axios.get(`${RENDER_URL}/health`, { timeout: 10000 });
+            console.log(`[KEEP-ALIVE] Self-ping successful @ ${new Date().toISOString()}`);
+        } catch (err) {
+            console.warn(`[KEEP-ALIVE] Self-ping failed: ${err.message}`);
+        }
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// YOUR ORIGINAL CODE (Unchanged)
+// ════════════════════════════════════════════════════════════════════════════
 cron.schedule('0 * * * *', async () => {
     console.log('--- [CRON] Starting Flight Status Sync ---');
 

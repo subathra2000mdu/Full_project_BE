@@ -7,11 +7,11 @@ const PORT = process.env.PORT || 3001;
 mongoose
     .connect(process.env.MONGODB_URI)
     .then(() => {
-        console.log('Connected to MongoDB Atlas');
+        console.log('✅ Connected to MongoDB Atlas');
         app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
+            console.log(`🚀 Server running on port ${PORT}`);
         });
     })
     .catch((err) => {
-        console.error('Database connection error:', err.message);
+        console.error('❌ Database connection error:', err.message);
     });
