@@ -23,9 +23,28 @@ const getAirportName = (iata) => {
   return airports[iata?.toUpperCase()] || `${iata?.toUpperCase()} Airport`;
 };
 
+// ─── Build an IST-correct Date from a YYYY-MM-DD string + HH:MM (IST) ─────────
+// e.g. buildISTDate("2026-04-10", "09:30") → Date object that is 09:30 IST
+// IST = UTC+5:30, so we subtract 5h30m to get the UTC equivalent.
+const buildISTDate = (dateStr, timeIST) => {
+  const [hours, minutes] = timeIST.split(':').map(Number);
+  // Total IST minutes from midnight
+  const istMinutesFromMidnight = hours * 60 + minutes;
+  // IST offset = 330 minutes ahead of UTC
+  const utcMinutesFromMidnight = istMinutesFromMidnight - 330;
+
+  // Parse the date as UTC midnight, then add the UTC minutes
+  const base = new Date(`${dateStr}T00:00:00.000Z`);
+  base.setUTCMinutes(base.getUTCMinutes() + utcMinutesFromMidnight);
+  return base;
+};
+
 // ─── Seed dummy flights into MongoDB ──────────────────────────────────────────
+// All departure times are expressed in IST so they display correctly in the UI.
 const seedDummyFlights = async (from, to, date) => {
-  const baseDate = date || new Date().toISOString().split('T')[0];
+  // Default to today in IST if no date given
+  const baseDate = date || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+  // 'sv-SE' locale returns "YYYY-MM-DD" — the cleanest way to get IST date string
 
   const dummyFlights = [
     {
@@ -35,7 +54,7 @@ const seedDummyFlights = async (from, to, date) => {
       arrivalLocation: getAirportName(to),
       departureIata: from.toUpperCase(),
       arrivalIata: to.toUpperCase(),
-      departureTime: new Date(`${baseDate}T03:30:00.000Z`), // 9:00 AM IST
+      departureTime: buildISTDate(baseDate, "09:00"), // 9:00 AM IST
       price: 4500,
       seatsAvailable: 48,
       status: 'scheduled'
@@ -47,7 +66,7 @@ const seedDummyFlights = async (from, to, date) => {
       arrivalLocation: getAirportName(to),
       departureIata: from.toUpperCase(),
       arrivalIata: to.toUpperCase(),
-      departureTime: new Date(`${baseDate}T05:00:00.000Z`), // 10:30 AM IST
+      departureTime: buildISTDate(baseDate, "10:30"), // 10:30 AM IST
       price: 5800,
       seatsAvailable: 32,
       status: 'scheduled'
@@ -59,7 +78,7 @@ const seedDummyFlights = async (from, to, date) => {
       arrivalLocation: getAirportName(to),
       departureIata: from.toUpperCase(),
       arrivalIata: to.toUpperCase(),
-      departureTime: new Date(`${baseDate}T09:30:00.000Z`), // 3:00 PM IST
+      departureTime: buildISTDate(baseDate, "15:00"), // 3:00 PM IST
       price: 3800,
       seatsAvailable: 65,
       status: 'scheduled'
@@ -71,7 +90,7 @@ const seedDummyFlights = async (from, to, date) => {
       arrivalLocation: getAirportName(to),
       departureIata: from.toUpperCase(),
       arrivalIata: to.toUpperCase(),
-      departureTime: new Date(`${baseDate}T12:00:00.000Z`), // 5:30 PM IST
+      departureTime: buildISTDate(baseDate, "17:30"), // 5:30 PM IST
       price: 6200,
       seatsAvailable: 20,
       status: 'scheduled'
@@ -83,7 +102,7 @@ const seedDummyFlights = async (from, to, date) => {
       arrivalLocation: getAirportName(to),
       departureIata: from.toUpperCase(),
       arrivalIata: to.toUpperCase(),
-      departureTime: new Date(`${baseDate}T14:30:00.000Z`), // 8:00 PM IST
+      departureTime: buildISTDate(baseDate, "20:00"), // 8:00 PM IST
       price: 3200,
       seatsAvailable: 55,
       status: 'scheduled'
@@ -99,9 +118,13 @@ const seedDummyFlights = async (from, to, date) => {
   );
 
   const seeded = await Promise.all(ops);
-  console.log(`✅ Seeded ${seeded.length} dummy flights for ${from} → ${to}`);
+  console.log(`✅ Seeded ${seeded.length} dummy flights for ${from} → ${to} on ${baseDate} (IST)`);
   return seeded;
 };
+
+// ─── Helper: get YYYY-MM-DD in IST from a Date object ─────────────────────────
+const toISTDateString = (date) =>
+  new Date(date).toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
 
 // ─── MAIN: Search Flights ──────────────────────────────────────────────────────
 exports.searchFlights = async (req, res) => {
@@ -113,7 +136,7 @@ exports.searchFlights = async (req, res) => {
     }
 
     const fromUpper = from.toUpperCase();
-    const toUpper = to.toUpperCase();
+    const toUpper   = to.toUpperCase();
     let synchronizedFlights = [];
     let source = "";
 
@@ -128,16 +151,24 @@ exports.searchFlights = async (req, res) => {
       });
 
       const externalFlights = (response.data?.data || [])
-        .filter(f =>
-          f.arrival?.iata?.toUpperCase() === toUpper // Filter by arrival in code
-        );
+        .filter(f => f.arrival?.iata?.toUpperCase() === toUpper);
 
       console.log(`🛫 Aviationstack returned ${externalFlights.length} flights for ${fromUpper}→${toUpper}`);
 
       if (externalFlights.length > 0) {
+        // Use today's IST date as fallback if date not provided
+        const baseDate = date || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+
         const flightOps = externalFlights.map(async (f) => {
           const flightNum = f.flight?.iata || f.flight?.number || `FL-${Date.now()}`;
-          const baseDate = date || new Date().toISOString().split('T')[0];
+
+          // For API flights: use the scheduled time if given, else build an IST time
+          let departureTime;
+          if (f.departure?.scheduled) {
+            departureTime = new Date(f.departure.scheduled);
+          } else {
+            departureTime = buildISTDate(baseDate, "06:00"); // 6:00 AM IST fallback
+          }
 
           return await Flight.findOneAndUpdate(
             { flightNumber: flightNum },
@@ -145,15 +176,12 @@ exports.searchFlights = async (req, res) => {
               airline: f.airline?.name || "Unknown Airline",
               flightNumber: flightNum,
               departureLocation: f.departure?.airport || getAirportName(fromUpper),
-              arrivalLocation: f.arrival?.airport || getAirportName(toUpper),
+              arrivalLocation:   f.arrival?.airport   || getAirportName(toUpper),
               departureIata: fromUpper,
-              arrivalIata: toUpper,
-              // If API gives null scheduled time, use the searched date
-              departureTime: f.departure?.scheduled
-                ? new Date(f.departure.scheduled)
-                : new Date(`${baseDate}T06:00:00.000Z`),
-              status: f.flight_status || 'scheduled',
-              price: 3000 + Math.floor(Math.random() * 4000),
+              arrivalIata:   toUpper,
+              departureTime,
+              status:         f.flight_status || 'scheduled',
+              price:          3000 + Math.floor(Math.random() * 4000),
               seatsAvailable: Math.floor(Math.random() * 60) + 10
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -163,47 +191,46 @@ exports.searchFlights = async (req, res) => {
         synchronizedFlights = await Promise.all(flightOps);
         source = "aviationstack_api";
       }
-
     } catch (apiErr) {
-      console.warn("⚠️  API Error:", apiErr.message);
+      console.warn("⚠️  Aviationstack API Error:", apiErr.message);
     }
 
-    // ── Step 2: Fallback to MongoDB if API gave nothing ────────────────────────
+    // ── Step 2: Fallback to MongoDB ────────────────────────────────────────────
     if (synchronizedFlights.length === 0) {
       console.log("🔍 Checking local MongoDB...");
       synchronizedFlights = await Flight.find({
         departureIata: fromUpper,
-        arrivalIata: toUpper
+        arrivalIata:   toUpper
       });
+
+      // Secondary fallback: match by airport name patterns
       if (synchronizedFlights.length === 0) {
-    const iataToName = {
-      MAA: /madras|chennai|meenambakkam/i,
-      BOM: /mumbai|chhatrapati|sahar/i,
-      DEL: /delhi|indira gandhi/i,
-      BLR: /bangalore|bengaluru|kempegowda/i,
-      HYD: /hyderabad|rajiv gandhi/i,
-      CCU: /kolkata|netaji/i,
-      COK: /cochin|kochi/i,
-      AMD: /ahmedabad|sardar/i,
-      PNQ: /pune/i,
-      GOI: /goa/i
-    };
+        const iataToName = {
+          MAA: /madras|chennai|meenambakkam/i,
+          BOM: /mumbai|chhatrapati|sahar/i,
+          DEL: /delhi|indira gandhi/i,
+          BLR: /bangalore|bengaluru|kempegowda/i,
+          HYD: /hyderabad|rajiv gandhi/i,
+          CCU: /kolkata|netaji/i,
+          COK: /cochin|kochi/i,
+          AMD: /ahmedabad|sardar/i,
+          PNQ: /pune/i,
+          GOI: /goa/i
+        };
 
-    const depPattern = iataToName[fromUpper];
-    const arrPattern = iataToName[toUpper];
+        const depPattern = iataToName[fromUpper];
+        const arrPattern = iataToName[toUpper];
 
-    if (depPattern && arrPattern) {
-      synchronizedFlights = await Flight.find({
-        departureLocation: { $regex: depPattern },
-        arrivalLocation: { $regex: arrPattern }
-      });
-      console.log(`📍 Found ${synchronizedFlights.length} flights by location name`);
+        if (depPattern && arrPattern) {
+          synchronizedFlights = await Flight.find({
+            departureLocation: { $regex: depPattern },
+            arrivalLocation:   { $regex: arrPattern }
+          });
+          console.log(`📍 Found ${synchronizedFlights.length} flights by location name`);
+        }
+      }
+      source = "mongodb";
     }
-  }
-
-  source = "mongodb";
-}
-
 
     // ── Step 3: Seed dummy data if still empty ─────────────────────────────────
     if (synchronizedFlights.length === 0) {
@@ -212,21 +239,26 @@ exports.searchFlights = async (req, res) => {
       source = "seeded_dummy";
     }
 
-    // ── Step 4: Filter by date (only if filter keeps results) ─────────────────
+    // ── Step 4: Filter by date using IST comparison ────────────────────────────
+    // Both the flight's departureTime and the user's selected date are compared
+    // in IST to avoid UTC midnight crossover issues.
     if (date && synchronizedFlights.length > 0) {
       const filtered = synchronizedFlights.filter(f => {
-        if (!f.departureTime) return true; // Keep if no date
+        if (!f.departureTime) return true; // keep if no date set
         try {
-          const flightDate = new Date(f.departureTime).toISOString().split('T')[0];
-          return flightDate === date;
+          return toISTDateString(f.departureTime) === date;
+          // date param is already "YYYY-MM-DD" from the frontend date input
         } catch {
           return true;
         }
       });
 
-      // Only apply filter if results remain — prevents empty response
+      // Only apply filter if it keeps at least one result
       if (filtered.length > 0) {
         synchronizedFlights = filtered;
+      } else {
+        // No flights match the date — return empty so frontend shows "no flights on date"
+        synchronizedFlights = [];
       }
     }
 
@@ -279,7 +311,6 @@ exports.addFlight = async (req, res) => {
       departureIata, arrivalIata, departureTime, price, seatsAvailable, status
     } = req.body;
 
-    // Check duplicate
     const existing = await Flight.findOne({ flightNumber });
     if (existing) {
       return res.status(409).json({ message: "Flight with this number already exists" });
@@ -290,17 +321,16 @@ exports.addFlight = async (req, res) => {
       flightNumber,
       departureLocation,
       arrivalLocation,
-      departureIata: departureIata?.toUpperCase(),
-      arrivalIata: arrivalIata?.toUpperCase(),
-      departureTime: new Date(departureTime),
-      price: price || 5000,
+      departureIata:  departureIata?.toUpperCase(),
+      arrivalIata:    arrivalIata?.toUpperCase(),
+      departureTime:  new Date(departureTime),
+      price:          price          || 5000,
       seatsAvailable: seatsAvailable || 75,
-      status: status || 'scheduled'
+      status:         status         || 'scheduled'
     });
 
     const saved = await newFlight.save();
     res.status(201).json(saved);
-
   } catch (err) {
     res.status(500).json({ message: "Add Flight Error", error: err.message });
   }
@@ -309,28 +339,20 @@ exports.addFlight = async (req, res) => {
 // ─── Admin: Update Flight Status ──────────────────────────────────────────────
 exports.updateStatus = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id }     = req.params;
     const { status } = req.body;
 
     const validStatuses = ['scheduled', 'active', 'landed', 'cancelled', 'incident', 'diverted'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ 
-        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+      return res.status(400).json({
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
       });
     }
 
-    const updated = await Flight.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
-
-    if (!updated) {
-      return res.status(404).json({ message: "Flight not found" });
-    }
+    const updated = await Flight.findByIdAndUpdate(id, { status }, { new: true });
+    if (!updated) return res.status(404).json({ message: "Flight not found" });
 
     res.status(200).json(updated);
-
   } catch (err) {
     res.status(500).json({ message: "Update Status Error", error: err.message });
   }
