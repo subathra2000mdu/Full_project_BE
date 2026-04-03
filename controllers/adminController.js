@@ -1,5 +1,5 @@
 const Booking = require('../models/Booking');
-const History = require('../models/History'); // Only declare this once at the top
+const History = require('../models/History'); 
 const CancellationHistory = require('../models/CancellationHistory');
 
 exports.getDashboardStats = async (req, res) => {

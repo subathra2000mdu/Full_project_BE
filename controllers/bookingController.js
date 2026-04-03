@@ -98,7 +98,6 @@ exports.downloadItinerary = async (req, res) => {
         doc.setTextColor(40, 116, 240); 
         doc.text("FLIGHT ITINERARY", 105, 20, { align: "center" });
         
-        // FIX: Removed the ["---", "---"] lines to clean up the PDF
         const tableData = [
             ["Booking Ref", booking.bookingReference || "N/A"],
             ["Passenger", booking.passengerDetails?.name || "N/A"],

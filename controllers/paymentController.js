@@ -3,7 +3,6 @@ const sendBookingEmail = require('../utils/emailService');
 const { jsPDF } = require("jspdf");
 const autoTable = require("jspdf-autotable").default;
 
-// POST /api/auth/payments/create-intent
 exports.createPaymentIntent = async (req, res) => {
     try {
         const { amount, bookingId } = req.body;
@@ -21,7 +20,6 @@ exports.createPaymentIntent = async (req, res) => {
     }
 };
 
-// POST /api/auth/payments/confirm
 exports.confirmPaymentStatus = async (req, res) => {
     try {
         const { bookingId } = req.body;
@@ -41,7 +39,6 @@ exports.confirmPaymentStatus = async (req, res) => {
             return res.status(404).json({ message: "Booking not found" });
         }
 
-        // 2. Generate PDF automatically on the server
         const doc = new jsPDF();
         doc.setFontSize(20);
         doc.setTextColor(40, 116, 240); 
@@ -67,11 +64,8 @@ exports.confirmPaymentStatus = async (req, res) => {
             headStyles: { fillColor: [0, 123, 255] }
         });
 
-        // Convert PDF to Buffer for NodeMailer
         const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
 
-        // 3. Send email with the generated PDF as an attachment
-        // Ensure your emailService.js accepts (email, bookingData, attachmentBuffer)
         await sendBookingEmail(updatedBooking.passengerDetails.email, updatedBooking, pdfBuffer);
 
         res.status(200).json({
