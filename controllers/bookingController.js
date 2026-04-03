@@ -1,11 +1,11 @@
-// controllers/bookingController.js
+
 const { jsPDF }   = require("jspdf");
 const autoTable   = require("jspdf-autotable").default;
 const Booking     = require('../models/Booking');
 const History     = require('../models/History');
 const sendBookingEmail = require('../utils/emailService');
 
-// ── Create / Reserve Booking ──────────────────────────────────────────────────
+
 exports.createBooking = async (req, res) => {
     try {
         const { flightId, passengerName, passengerEmail, seatPreference } = req.body;
@@ -38,7 +38,6 @@ exports.createBooking = async (req, res) => {
     }
 };
 
-// ── Update Booking (e.g., Completed / Cancelled) + Send Email ─────────────────
 exports.updateBooking = async (req, res) => {
     try {
         const { id }            = req.params;
@@ -54,10 +53,6 @@ exports.updateBooking = async (req, res) => {
             return res.status(404).json({ message: "Booking not found" });
         }
 
-        // ── Send email NON-BLOCKING ───────────────────────────────────────────
-        // We deliberately do NOT await here at the top level.
-        // Instead we use .catch() to log failures without crashing the response.
-        // The emailService already does internal retry — this is the outer safety net.
         const recipientEmail =
             updatedBooking.passengerDetails?.email ||
             req.user?.email;
@@ -78,7 +73,7 @@ exports.updateBooking = async (req, res) => {
     }
 };
 
-// ── Get My Bookings ───────────────────────────────────────────────────────────
+
 exports.getMyBookings = async (req, res) => {
     try {
         const history = await Booking.find({ user: req.user.id })
@@ -91,7 +86,7 @@ exports.getMyBookings = async (req, res) => {
     }
 };
 
-// ── Cancel Booking ────────────────────────────────────────────────────────────
+
 exports.cancelBooking = async (req, res) => {
     try {
         const bookingId      = req.params.id;
@@ -109,7 +104,7 @@ exports.cancelBooking = async (req, res) => {
     }
 };
 
-// ── Booking Stats ─────────────────────────────────────────────────────────────
+
 exports.getBookingStats = async (req, res) => {
     try {
         const total = await Booking.countDocuments();
@@ -120,7 +115,7 @@ exports.getBookingStats = async (req, res) => {
     }
 };
 
-// ── Download PDF Itinerary ────────────────────────────────────────────────────
+
 exports.downloadItinerary = async (req, res) => {
     try {
         const booking = await Booking.findById(req.params.id).populate('flight');
@@ -130,8 +125,8 @@ exports.downloadItinerary = async (req, res) => {
 
         const doc = new jsPDF();
 
-        // ── Header ──
-        doc.setFillColor(37, 99, 235);  // blue-600
+       
+        doc.setFillColor(37, 99, 235);  
         doc.rect(0, 0, 210, 40, 'F');
 
         doc.setFontSize(22);
@@ -143,8 +138,8 @@ exports.downloadItinerary = async (req, res) => {
         doc.setFont('helvetica', 'normal');
         doc.text("Flight Booking & Reservation System", 105, 30, { align: "center" });
 
-        // ── Booking reference badge ──
-        doc.setFillColor(239, 246, 255); // blue-50
+      
+        doc.setFillColor(239, 246, 255); 
         doc.roundedRect(14, 48, 182, 14, 4, 4, 'F');
         doc.setFontSize(11);
         doc.setTextColor(37, 99, 235);
@@ -154,7 +149,7 @@ exports.downloadItinerary = async (req, res) => {
             105, 57, { align: "center" }
         );
 
-        // ── Details table ──
+      
         const tableData = [
             ["Passenger Name",  booking.passengerDetails?.name  || "N/A"],
             ["Passenger Email", booking.passengerDetails?.email || "N/A"],
@@ -165,7 +160,7 @@ exports.downloadItinerary = async (req, res) => {
             ["Fare Amount",     `INR ${Number(booking.flight?.price || 0).toLocaleString('en-IN')}`],
             ["Seat Preference", booking.seatPreference           || "N/A"],
             ["Payment Status",  (booking.paymentStatus || "Pending").toUpperCase()],
-            // Always use today's date — the date the PDF was generated/downloaded
+            
             ["Confirmed On",    new Date().toLocaleDateString('en-GB', {
                 day: '2-digit', month: 'short', year: 'numeric'
             })],
@@ -192,7 +187,7 @@ exports.downloadItinerary = async (req, res) => {
             },
         });
 
-        // ── Footer note ──
+        
         const finalY = doc.lastAutoTable?.finalY || 170;
         doc.setFontSize(9);
         doc.setTextColor(148, 163, 184);
@@ -202,7 +197,7 @@ exports.downloadItinerary = async (req, res) => {
             105, finalY + 16, { align: "center" }
         );
 
-        // ── Send PDF ──
+        
         const pdfOutput = doc.output("arraybuffer");
         const filename  = `itinerary_${booking.bookingReference || booking._id}.pdf`;
 
