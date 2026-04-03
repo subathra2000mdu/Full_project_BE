@@ -11,6 +11,8 @@ const adminRouter = require("./routers/adminRouter");
 
 app.use(cors({
     origin: 'https://theflightbooking.netlify.app',
+    origin: 'http://localhost:3001',
+    origin: "*",
     credentials: true,
 }));
 app.use(express.json());
