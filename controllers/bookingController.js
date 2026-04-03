@@ -91,29 +91,43 @@ exports.downloadItinerary = async (req, res) => {
     try {
         const booking = await Booking.findById(req.params.id).populate('flight');
         if (!booking) return res.status(404).json({ message: "Booking not found" });
+
         const doc = new jsPDF();
+        
         doc.setFontSize(20);
+        doc.setTextColor(40, 116, 240); 
         doc.text("FLIGHT ITINERARY", 105, 20, { align: "center" });
+        
+        // FIX: Removed the ["---", "---"] lines to clean up the PDF
         const tableData = [
-            ["Booking Ref", booking.bookingReference],
-            ["Passenger", booking.passengerDetails.name],
-            ["Airline", booking.flight.airline],
-            ["Flight No", booking.flight.flightNumber],
-            ["From", booking.flight.departureLocation],
-            ["To", booking.flight.arrivalLocation],
-            ["Status", booking.paymentStatus]
+            ["Booking Ref", booking.bookingReference || "N/A"],
+            ["Passenger", booking.passengerDetails?.name || "N/A"],
+            ["Airline", booking.flight?.airline || "N/A"],
+            ["Flight No", booking.flight?.flightNumber || "N/A"],
+            ["From", booking.flight?.departureLocation || "N/A"],
+            ["To", booking.flight?.arrivalLocation || "N/A"],
+            ["Fare Amount", `INR ${booking.flight?.price || "0"}`],
+            ["Payment Status", (booking.paymentStatus || "Pending").toUpperCase()],
+            // FIX: Use new Date() to ensure "today's date" is always valid
+            ["Confirmed On", new Date().toLocaleDateString('en-GB')] 
         ];
+
         autoTable(doc, {
             startY: 40,
             head: [['Description', 'Details']],
             body: tableData,
-            theme: 'striped'
+            theme: 'striped',
+            headStyles: { fillColor: [0, 123, 255] },
+            styles: { fontSize: 12, cellPadding: 5 }
         });
+
         const pdfOutput = doc.output("arraybuffer");
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', 'attachment; filename=itinerary.pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=itinerary_${booking.bookingReference}.pdf`);
         res.send(Buffer.from(pdfOutput));
+
     } catch (err) {
+        console.error("PDF Generation Error:", err);
         res.status(500).json({ message: "PDF Generation Failed" });
     }
 };

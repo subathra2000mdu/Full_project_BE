@@ -44,6 +44,10 @@ const sendBookingEmail = async (passengerEmail, bookingDetails) => {
                         <p><strong>From:</strong> ${bookingDetails?.flight?.departureLocation || 'N/A'}</p>
                         <p><strong>To:</strong> ${bookingDetails?.flight?.arrivalLocation || 'N/A'}</p>
                         <p><strong>Total Amount:</strong> ₹${bookingDetails?.flight?.price || '0.00'}</p>
+                        <p><strong>Total Amount Paid:</strong> ₹${bookingDetails?.flight?.price || '0.00'}</p>
+                        <p><strong>Payment Status:</strong> <span style="color:${headerColor}; font-weight:bold;">${status}</span></p>
+    <hr style="border: 0; border-top: 1px solid #eee;" />
+    <p><strong>Flight:</strong> ${bookingDetails?.flight?.flightNumber} (${bookingDetails?.flight?.airline})</p>
                         <p><strong>Current Status:</strong> <span style="font-weight:bold; color:${headerColor};">${status}</span></p>
                     </div>
                     
