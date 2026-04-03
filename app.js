@@ -9,7 +9,10 @@ const bookingRouter = require("./routers/bookingRouter");
 const paymentRouter = require("./routers/paymentRouter");
 const adminRouter = require("./routers/adminRouter");
 
-app.use(cors());
+app.use(cors({
+    origin: 'https://theflightbooking.netlify.app',
+    credentials: true,
+}));
 app.use(express.json());
 
 app.use("/api/auth/payments", paymentRouter);
