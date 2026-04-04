@@ -1,78 +1,90 @@
-const Booking   = require('../models/Booking');
-const sendEmail = require('../utils/sendEmail');
-const { paymentConfirmationEmail } = require('../utils/emailTemplates');
+// controllers/paymentController.js
+// Requires emailService from:  ../utils/emailService
+// Email is sent when payment is confirmed via POST /confirm
 
-const generateRef = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+const Booking          = require('../models/Booking');
+const sendBookingEmail = require('../utils/emailService'); // ← correct path
 
-// POST /api/payments/create-intent
-const createPaymentIntent = async (req, res) => {
+// ── POST /payments/create-intent ─────────────────────────────────────────────
+// Creates a mock payment intent (no real Stripe in this project)
+exports.createPaymentIntent = async (req, res) => {
   try {
-    const { bookingId, amount, currency, paymentMethod } = req.body;
+    const { bookingId, amount, currency, paymentMethod, description, paymentDetails } = req.body;
 
-    if (!bookingId) return res.status(400).json({ message: 'bookingId is required' });
+    if (!bookingId || !amount) {
+      return res.status(400).json({ message: 'bookingId and amount are required' });
+    }
 
     const booking = await Booking.findById(bookingId);
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
 
-    const clientSecret = `pi_${generateRef()}_secret_${generateRef()}`;
+    // Mock payment intent — replace with real Stripe logic if needed
+    const clientSecret = `pi_${Math.random().toString(36).substring(2)}_secret_${Date.now()}`;
+
+    console.log(`[PaymentIntent] Created for booking ${bookingId} | Amount: ${amount} ${currency || 'INR'}`);
 
     return res.status(200).json({
       clientSecret,
-      amount:   amount   || booking.flight?.price || 0,
-      currency: currency || 'INR',
-      paymentMethod,
-      message:  'Payment intent created successfully',
+      bookingId,
+      amount,
+      currency:      currency      || 'INR',
+      paymentMethod: paymentMethod || 'card',
+      status:        'requires_confirmation',
     });
+
   } catch (err) {
-    console.error('[createPaymentIntent]', err.message);
-    return res.status(500).json({ message: 'Failed to create payment intent', error: err.message });
+    console.error('[createPaymentIntent Error]:', err.message);
+    return res.status(500).json({
+      message: 'Failed to create payment intent',
+      error:   err.message,
+    });
   }
 };
 
-// POST /api/payments/confirm
-const confirmPayment = async (req, res) => {
+// ── POST /payments/confirm ────────────────────────────────────────────────────
+// Marks booking as Completed and sends confirmation email via utils/emailService.js
+exports.confirmPayment = async (req, res) => {
   try {
     const { bookingId } = req.body;
-    if (!bookingId) return res.status(400).json({ message: 'bookingId is required' });
 
-    const booking = await Booking.findById(bookingId).populate('flight');
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
-
-    booking.paymentStatus = 'Completed';
-    await booking.save();
-
-    console.log(`[confirmPayment] Booking ${bookingId} marked Completed`);
-
-    // Send confirmation email (non-blocking)
-    const passengerEmail = booking.passengerDetails?.email;
-    if (passengerEmail) {
-      const { subject, html } = paymentConfirmationEmail({
-        passengerName:    booking.passengerDetails?.name    || 'Passenger',
-        bookingReference: booking.bookingReference          || booking._id.toString().slice(-8).toUpperCase(),
-        airline:          booking.flight?.airline           || 'N/A',
-        flightNumber:     booking.flight?.flightNumber      || 'N/A',
-        from:             booking.flight?.departureLocation || 'N/A',
-        to:               booking.flight?.arrivalLocation   || 'N/A',
-        departureTime:    booking.flight?.departureTime     || null,
-        amount:           booking.flight?.price             || 0,
-        seatPreference:   booking.seatPreference            || 'N/A',
-      });
-
-      sendEmail({ to: passengerEmail, subject, html })
-        .then(() => console.log(`[confirmPayment] Confirmation email sent to ${passengerEmail}`))
-        .catch(e  => console.error(`[confirmPayment] Email error: ${e.message}`));
-    } else {
-      console.warn('[confirmPayment] No passenger email found — skipping email.');
+    if (!bookingId) {
+      return res.status(400).json({ message: 'bookingId is required' });
     }
 
+    // Update booking status to Completed
+    const booking = await Booking.findByIdAndUpdate(
+      bookingId,
+      { paymentStatus: 'Completed' },
+      { new: true }
+    ).populate('flight');
+
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    // Send confirmation email — fire-and-forget (never blocks the response)
+    const recipientEmail = booking.passengerDetails?.email;
+    if (recipientEmail) {
+      sendBookingEmail(recipientEmail, booking)
+        .catch(err => console.error('[email] payment confirm fire-and-forget error:', err.message));
+    } else {
+      console.warn('[email] No recipient email found for booking:', bookingId);
+    }
+
+    console.log(`[PaymentConfirm] Booking ${bookingId} marked Completed. Email queued.`);
+
     return res.status(200).json({
-      message: 'Payment confirmed successfully! Booking confirmation email sent.',
+      message:  'Payment confirmed successfully. Booking confirmation email sent.',
       booking,
     });
+
   } catch (err) {
-    console.error('[confirmPayment]', err.message);
-    return res.status(500).json({ message: 'Payment confirmation failed', error: err.message });
+    console.error('[confirmPayment Error]:', err.message);
+    return res.status(500).json({
+      message: 'Payment confirmation failed',
+      error:   err.message,
+    });
   }
 };
-
-module.exports = { createPaymentIntent, confirmPayment };
