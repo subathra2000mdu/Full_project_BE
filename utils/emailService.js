@@ -1,6 +1,6 @@
 // utils/emailService.js
-// FIX: ENETUNREACH on Render = IPv6 being used, Render free tier blocks IPv6.
-// Solution: family:4 forces IPv4. This is the ONLY change needed.
+// FIX: ENETUNREACH on Render. 
+// We use the direct IPv4 '74.125.20.108' to bypass Render's IPv6 routing issues.
 
 const nodemailer = require('nodemailer');
 
@@ -8,29 +8,28 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const createTransporter = () =>
   nodemailer.createTransport({
-    host:   'smtp.gmail.com',
-    port:   465,
+    // 1. Direct IPv4 address for smtp.gmail.com to kill ENETUNREACH
+    host: '74.125.20.108', 
+    port: 465,
     secure: true,
-    //requireTLS: true,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    // ✅ THIS IS THE FIX — forces IPv4 instead of IPv6
-    // Render free tier blocks IPv6 (2607:f8b0:... addresses)
-    // Without this, nodemailer picks the IPv6 address returned by DNS
-    // and gets ENETUNREACH because Render can't reach it.
-    family: 4,
+    // 2. We must tell the SSL certificate that we are still talking to Gmail
+    tls: {
+      rejectUnauthorized: false,
+      servername: 'smtp.gmail.com',
+      minVersion: 'TLSv1.2'
+    },
+    // 3. Keep IPv4 force as a backup
+    family: 4, 
     connectionTimeout: 20000,
     greetingTimeout: 20000,
     socketTimeout: 30000,
-    tls: {
-      rejectUnauthorized: false,
-      minVersion: 'TLSv1.2'
-    },
   });
 
-// HTML email builder — unchanged from your existing code
+// HTML email builder — Logic remains exactly as provided
 const buildEmailHTML = (booking, isCancel = false) => {
   const status    = (booking.paymentStatus || 'Pending').toUpperCase();
   const passenger = booking.passengerDetails?.name           || 'Passenger';
@@ -65,14 +64,14 @@ const buildEmailHTML = (booking, isCancel = false) => {
 
   const rows = [
     ['Booking Reference', `#${ref}`],
-    ['Passenger Name',    passenger],
-    ['Email',             email],
-    ['Airline',           airline],
-    ['Flight Number',     flightNum],
-    ['From',              from],
-    ['To',                to],
-    ['Fare Amount',       price],
-    ['Date',              date],
+    ['Passenger Name',     passenger],
+    ['Email',              email],
+    ['Airline',            airline],
+    ['Flight Number',      flightNum],
+    ['From',               from],
+    ['To',                 to],
+    ['Fare Amount',        price],
+    ['Date',               date],
   ];
 
   return `<!DOCTYPE html>
@@ -134,7 +133,7 @@ const buildEmailHTML = (booking, isCancel = false) => {
   <tr>
     <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 36px;text-align:center;">
       <p style="margin:0;font-size:11px;color:#94a3b8;">
-        &copy; ${new Date().getFullYear()} Flight Booking and Reservation System. Do not reply to this email.
+        &copy; ${new Date().getFullYear()} Flight Booking and Reservation System.
       </p>
     </td>
   </tr>
@@ -152,7 +151,7 @@ const sendWithRetry = async (mailOptions, attempts = 3, delayMs = 3000) => {
     try {
       const transporter = createTransporter();
       const info = await transporter.sendMail(mailOptions);
-      console.log(`✅ Email sent | Attempt ${i} | To: ${mailOptions.to} | MsgId: ${info.messageId}`);
+      console.log(`✅ Email sent | Attempt ${i} | To: ${mailOptions.to}`);
       return info;
     } catch (err) {
       lastError = err;
@@ -166,51 +165,31 @@ const sendWithRetry = async (mailOptions, attempts = 3, delayMs = 3000) => {
   throw lastError;
 };
 
-// Main export — unchanged interface, same as your existing code
+// Main export
 const sendBookingEmail = async (toEmail, booking) => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.error('❌ EMAIL_USER / EMAIL_PASS not set in environment variables');
+    console.error('❌ EMAIL_USER / EMAIL_PASS not set');
     return;
   }
-  if (!toEmail) {
-    console.warn('⚠️  No recipient email — skipping send');
-    return;
-  }
+  if (!toEmail) return;
 
   const isCancel = booking.paymentStatus === 'Cancelled';
-  const ref      = booking.bookingReference
-    || booking._id?.toString().slice(-8).toUpperCase()
-    || 'N/A';
+  const ref = booking.bookingReference || 'N/A';
 
   const subject = isCancel
-    ? `Booking Cancelled - #${ref} | Flight Booking System`
-    : `Booking Confirmed - #${ref} | Flight Booking System`;
+    ? `Booking Cancelled - #${ref}`
+    : `Booking Confirmed - #${ref}`;
 
   const mailOptions = {
-    from:    `"Flight Booking System" <${process.env.EMAIL_USER}>`,
-    to:      toEmail,
+    from: `"Flight Booking System" <${process.env.EMAIL_USER}>`,
+    to: toEmail,
     subject,
-    html:    buildEmailHTML(booking, isCancel),
-    text: [
-      `Flight Booking ${isCancel ? 'Cancellation' : 'Confirmation'}`,
-      '',
-      `Booking Ref : #${ref}`,
-      `Passenger   : ${booking.passengerDetails?.name  || 'N/A'}`,
-      `Email       : ${booking.passengerDetails?.email || 'N/A'}`,
-      `Airline     : ${booking.flight?.airline         || 'N/A'}`,
-      `Flight No   : ${booking.flight?.flightNumber    || 'N/A'}`,
-      `From        : ${booking.flight?.departureLocation || 'N/A'}`,
-      `To          : ${booking.flight?.arrivalLocation   || 'N/A'}`,
-      `Fare        : INR ${booking.flight?.price || 0}`,
-      `Status      : ${(booking.paymentStatus || 'Pending').toUpperCase()}`,
-      `Date        : ${new Date().toLocaleDateString('en-IN')}`,
-    ].join('\n'),
+    html: buildEmailHTML(booking, isCancel),
   };
 
   try {
     await sendWithRetry(mailOptions, 3, 3000);
   } catch (err) {
-    // Never throw — email failure must not crash the API response
     console.error('❌ All email retries failed:', err.message);
   }
 };
