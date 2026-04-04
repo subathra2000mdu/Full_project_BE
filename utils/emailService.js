@@ -1,55 +1,17 @@
 // utils/emailService.js
-// ROOT CAUSE: Render free tier cannot make outbound connections to smtp.gmail.com
-// because DNS resolves to IPv6 (2607:f8b0:...) and Render blocks IPv6 egress.
-// family:4 and dns.setDefaultResultOrder are ignored by the underlying net.Socket
-// in older Node versions on Render.
-//
-// GUARANTEED FIX: Use Gmail's actual IPv4 address (74.125.x.x) as the host
-// so DNS is never involved and IPv6 is never chosen.
-// Secondary fix: switch to port 587 STARTTLS (port 465 SSL also gets IPv6 resolved).
-//
-// Gmail's stable IPv4 SMTP addresses (these do not change):
-//   74.125.130.108  smtp.gmail.com
-//   74.125.130.109  alt1.gmail-smtp-in.l.google.com
-// We try each in order.
+// FINAL FIX: Render free tier BLOCKS all outbound SMTP (ports 465 & 587).
+// Solution: Use Brevo (ex-Sendinblue) HTTP API over port 443 — never blocked.
+// Free tier: 300 emails/day. Sign up at https://app.brevo.com
+// Get API key: Brevo dashboard → SMTP & API → API Keys → Generate
 
-const nodemailer = require('nodemailer');
+const https = require('https');
 
-// Gmail IPv4 addresses — bypasses DNS, guarantees no IPv6
-const GMAIL_IPV4_HOSTS = [
-  '74.125.130.108',
-  '74.125.68.108',
-  '74.125.28.108',
-];
-
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Build transporter with a specific IPv4 host
-const createTransporter = (host) =>
-  nodemailer.createTransport({
-    host,                    // Direct IPv4 — no DNS lookup, no IPv6
-    port:       587,         // STARTTLS
-    secure:     false,
-    requireTLS: true,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-      rejectUnauthorized: false,
-      servername: 'smtp.gmail.com', // SNI must still say gmail.com for TLS cert
-    },
-    connectionTimeout: 20000,
-    greetingTimeout:   20000,
-    socketTimeout:     30000,
-  });
-
-// HTML builder
+// Build email HTML (same as before)
 const buildEmailHTML = (booking, isCancel = false) => {
-  const passenger = booking.passengerDetails?.name  || 'Passenger';
-  const email     = booking.passengerDetails?.email || '';
-  const airline   = booking.flight?.airline          || 'N/A';
-  const flightNum = booking.flight?.flightNumber     || 'N/A';
+  const passenger = booking.passengerDetails?.name   || 'Passenger';
+  const email     = booking.passengerDetails?.email  || '';
+  const airline   = booking.flight?.airline           || 'N/A';
+  const flightNum = booking.flight?.flightNumber      || 'N/A';
   const from      = booking.flight?.departureLocation || 'N/A';
   const to        = booking.flight?.arrivalLocation   || 'N/A';
   const price     = booking.flight?.price
@@ -61,7 +23,7 @@ const buildEmailHTML = (booking, isCancel = false) => {
   const date = new Date().toLocaleDateString('en-IN', {
     day: '2-digit', month: 'long', year: 'numeric',
   });
-  const status    = (booking.paymentStatus || 'Pending').toUpperCase();
+  const status      = (booking.paymentStatus || 'Pending').toUpperCase();
   const headerColor = isCancel ? '#dc2626' : '#2563eb';
   const statusColor = isCancel ? '#dc2626' : '#16a34a';
   const statusBg    = isCancel ? '#fef2f2' : '#f0fdf4';
@@ -90,7 +52,7 @@ const buildEmailHTML = (booking, isCancel = false) => {
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+<head><meta charset="UTF-8"/></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:30px 15px;">
 <tr><td align="center">
@@ -149,37 +111,65 @@ const buildEmailHTML = (booking, isCancel = false) => {
 </html>`;
 };
 
-// Try each IPv4 host in sequence — stop on first success
-const sendWithIPv4Fallback = async (mailOptions) => {
-  let lastError;
+// Send via Brevo HTTP API — uses HTTPS port 443, never blocked by Render
+const sendViaBrevo = (mailOptions) => {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      sender:   { name: 'Flight Booking System', email: process.env.EMAIL_USER },
+      to:       [{ email: mailOptions.to }],
+      subject:  mailOptions.subject,
+      htmlContent: mailOptions.html,
+      textContent: mailOptions.text || '',
+    });
 
-  for (let i = 0; i < GMAIL_IPV4_HOSTS.length; i++) {
-    const host = GMAIL_IPV4_HOSTS[i];
-    console.log(`[Email] Trying host ${host} (${i + 1}/${GMAIL_IPV4_HOSTS.length})...`);
-    try {
-      const transporter = createTransporter(host);
-      const info = await transporter.sendMail(mailOptions);
-      console.log(`✅ [Email] Sent via ${host} | MsgId: ${info.messageId}`);
-      transporter.close();
-      return info;
-    } catch (err) {
-      lastError = err;
-      console.error(`❌ [Email] Failed on ${host}: ${err.message}`);
-      if (i < GMAIL_IPV4_HOSTS.length - 1) {
-        console.log('[Email] Trying next host in 2s...');
-        await wait(2000);
-      }
-    }
-  }
+    const options = {
+      hostname: 'api.brevo.com',
+      path:     '/v3/smtp/email',
+      method:   'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'api-key':       process.env.BREVO_API_KEY,
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
 
-  // All hosts failed — log and give up (never throw, never crash the API)
-  console.error(`❌ [Email] All ${GMAIL_IPV4_HOSTS.length} IPv4 hosts failed. Last error: ${lastError?.message}`);
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log(`✅ [Email] Sent via Brevo API | To: ${mailOptions.to} | Status: ${res.statusCode}`);
+          resolve({ statusCode: res.statusCode, body: data });
+        } else {
+          console.error(`❌ [Email] Brevo API error | Status: ${res.statusCode} | Body: ${data}`);
+          reject(new Error(`Brevo API error ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error(`❌ [Email] Brevo request error: ${err.message}`);
+      reject(err);
+    });
+
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('Brevo request timed out'));
+    });
+
+    req.write(payload);
+    req.end();
+  });
 };
 
-// Main export — same interface as before, no changes needed in controllers
+// Main export — same interface, no changes needed in controllers
 const sendBookingEmail = async (toEmail, booking) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.error('❌ [Email] EMAIL_USER or EMAIL_PASS not set in Render environment variables');
+  if (!process.env.BREVO_API_KEY) {
+    console.error('❌ [Email] BREVO_API_KEY not set in Render environment variables');
+    console.error('   → Sign up free at https://app.brevo.com → SMTP & API → API Keys');
+    return;
+  }
+  if (!process.env.EMAIL_USER) {
+    console.error('❌ [Email] EMAIL_USER not set (used as sender address)');
     return;
   }
   if (!toEmail) {
@@ -193,7 +183,6 @@ const sendBookingEmail = async (toEmail, booking) => {
     || 'N/A';
 
   const mailOptions = {
-    from:    `"Flight Booking System" <${process.env.EMAIL_USER}>`,
     to:      toEmail,
     subject: isCancel
       ? `Booking Cancelled - #${ref} | Flight Booking System`
@@ -203,10 +192,10 @@ const sendBookingEmail = async (toEmail, booking) => {
       `Flight Booking ${isCancel ? 'Cancellation' : 'Confirmation'}`,
       '',
       `Booking Ref : #${ref}`,
-      `Passenger   : ${booking.passengerDetails?.name  || 'N/A'}`,
-      `Email       : ${booking.passengerDetails?.email || 'N/A'}`,
-      `Airline     : ${booking.flight?.airline          || 'N/A'}`,
-      `Flight No   : ${booking.flight?.flightNumber     || 'N/A'}`,
+      `Passenger   : ${booking.passengerDetails?.name   || 'N/A'}`,
+      `Email       : ${booking.passengerDetails?.email  || 'N/A'}`,
+      `Airline     : ${booking.flight?.airline           || 'N/A'}`,
+      `Flight No   : ${booking.flight?.flightNumber      || 'N/A'}`,
       `From        : ${booking.flight?.departureLocation || 'N/A'}`,
       `To          : ${booking.flight?.arrivalLocation   || 'N/A'}`,
       `Fare        : INR ${booking.flight?.price         || 0}`,
@@ -215,11 +204,11 @@ const sendBookingEmail = async (toEmail, booking) => {
     ].join('\n'),
   };
 
-  // Non-blocking — errors are swallowed here, never crash the API
   try {
-    await sendWithIPv4Fallback(mailOptions);
+    await sendViaBrevo(mailOptions);
   } catch (err) {
-    console.error('❌ [Email] Unexpected error:', err.message);
+    // Never crash the API — just log
+    console.error('❌ [Email] Failed to send:', err.message);
   }
 };
 
