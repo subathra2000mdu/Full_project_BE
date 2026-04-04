@@ -1,4 +1,8 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Force DNS to resolve to IPv4 only - This is the standard fix for Render's network
+dns.setDefaultResultOrder('ipv4first');
 
 const sendBookingEmail = async (toEmail, booking) => {
   if (!toEmail || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -6,51 +10,54 @@ const sendBookingEmail = async (toEmail, booking) => {
     return;
   }
 
-  // 1. Use a simplified transporter 
-  // We use Port 465 with a very specific configuration to speed up the initial 'Hello'
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
     secure: true,
+    // Forces the connection to use IPv4 directly in the socket
+    family: 4, 
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    // Forces IPv4 and increases the 'Greeting' time so it doesn't timeout early
-    family: 4,
-    greetingTimeout: 30000, 
-    connectionTimeout: 30000,
-    socketTimeout: 45000,
-    debug: true, // This will show more info in your Render logs if it fails
+    // Increased timeouts to handle Render free tier slowness
+    connectionTimeout: 40000, 
+    greetingTimeout: 40000,
+    socketTimeout: 60000,
     tls: {
       rejectUnauthorized: false,
       servername: 'smtp.gmail.com'
     }
   });
 
-  const ref = booking.bookingReference || 'N/A';
+  const ref = booking.bookingReference || booking._id?.toString().slice(-8).toUpperCase() || 'N/A';
   const passenger = booking.passengerDetails?.name || 'Passenger';
 
   const mailOptions = {
-    from: `"Flight Booking" <${process.env.EMAIL_USER}>`,
+    from: `"Flight Booking System" <${process.env.EMAIL_USER}>`,
     to: toEmail,
     subject: `Booking Confirmation - #${ref}`,
     html: `
-      <div style="font-family: sans-serif; padding: 20px; color: #333;">
-        <h2 style="color: #2563eb;">Flight Confirmed!</h2>
-        <p>Hi ${passenger},</p>
-        <p>Your booking <b>#${ref}</b> has been successfully processed.</p>
-        <hr style="border: 0; border-top: 1px solid #eee;" />
-        <p style="font-size: 12px; color: #777;">Thank you for choosing our service.</p>
+      <div style="font-family: sans-serif; padding: 20px; color: #333; border: 1px solid #eee; border-radius: 10px;">
+        <h2 style="color: #2563eb;">Flight Booking Confirmed!</h2>
+        <p>Hi <b>${passenger}</b>,</p>
+        <p>Your booking <b>#${ref}</b> has been successfully processed and completed.</p>
+        <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0;">
+          <p style="margin: 5px 0;"><b>Airline:</b> ${booking.flight?.airline || 'N/A'}</p>
+          <p style="margin: 5px 0;"><b>Flight No:</b> ${booking.flight?.flightNumber || 'N/A'}</p>
+          <p style="margin: 5px 0;"><b>Route:</b> ${booking.flight?.departureLocation} to ${booking.flight?.arrivalLocation}</p>
+          <p style="margin: 5px 0;"><b>Status:</b> COMPLETED</p>
+        </div>
+        <p style="font-size: 12px; color: #777;">This is a computer-generated document. No signature is required.</p>
       </div>
     `,
   };
 
   try {
-    // We do NOT use 'await' in the controller, but we use it here to track the log
     await transporter.sendMail(mailOptions);
     console.log(`✅ [Email Service] Success: Sent to ${toEmail}`);
   } catch (err) {
+    // This logs the specific error for debugging in Render
     console.error(`❌ [Email Service] Final Error: ${err.message}`);
   } finally {
     transporter.close();
