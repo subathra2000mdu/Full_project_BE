@@ -128,6 +128,9 @@ exports.searchFlights = async (req, res) => {
 
     const fromUpper = from.toUpperCase();
     const toUpper   = to.toUpperCase();
+    
+    const targetDate = date || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+
     let synchronizedFlights = [];
     let source = "";
 
@@ -143,20 +146,10 @@ exports.searchFlights = async (req, res) => {
       const externalFlights = (response.data?.data || [])
         .filter(f => f.arrival?.iata?.toUpperCase() === toUpper);
 
-      console.log(`🛫 Aviationstack returned ${externalFlights.length} flights for ${fromUpper}→${toUpper}`);
-
       if (externalFlights.length > 0) {
-        const baseDate = date || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
-
         const flightOps = externalFlights.map(async (f) => {
           const flightNum = f.flight?.iata || f.flight?.number || `FL-${Date.now()}`;
-
-          let departureTime;
-          if (f.departure?.scheduled) {
-            departureTime = new Date(f.departure.scheduled);
-          } else {
-            departureTime = buildISTDate(baseDate, "06:00"); 
-          }
+          let departureTime = f.departure?.scheduled ? new Date(f.departure.scheduled) : buildISTDate(targetDate, "06:00");
 
           return await Flight.findOneAndUpdate(
             { flightNumber: flightNum },
@@ -168,77 +161,42 @@ exports.searchFlights = async (req, res) => {
               departureIata: fromUpper,
               arrivalIata:   toUpper,
               departureTime,
-              status:         f.flight_status || 'scheduled',
-              price:          3000 + Math.floor(Math.random() * 4000),
+              status: f.flight_status || 'scheduled',
+              price: 3000 + Math.floor(Math.random() * 4000),
               seatsAvailable: Math.floor(Math.random() * 60) + 10
             },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
+            { upsert: true, new: true }
           );
         });
-
         synchronizedFlights = await Promise.all(flightOps);
         source = "aviationstack_api";
       }
     } catch (apiErr) {
-      console.warn("⚠️  Aviationstack API Error:", apiErr.message);
+      console.warn("⚠️ Aviationstack API Error:", apiErr.message);
     }
 
     if (synchronizedFlights.length === 0) {
-      console.log("🔍 Checking local MongoDB...");
-      synchronizedFlights = await Flight.find({
+      const allRouteFlights = await Flight.find({
         departureIata: fromUpper,
-        arrivalIata:   toUpper
+        arrivalIata: toUpper
       });
 
-      if (synchronizedFlights.length === 0) {
-        const iataToName = {
-          MAA: /madras|chennai|meenambakkam/i,
-          BOM: /mumbai|chhatrapati|sahar/i,
-          DEL: /delhi|indira gandhi/i,
-          BLR: /bangalore|bengaluru|kempegowda/i,
-          HYD: /hyderabad|rajiv gandhi/i,
-          CCU: /kolkata|netaji/i,
-          COK: /cochin|kochi/i,
-          AMD: /ahmedabad|sardar/i,
-          PNQ: /pune/i,
-          GOI: /goa/i
-        };
-
-        const depPattern = iataToName[fromUpper];
-        const arrPattern = iataToName[toUpper];
-
-        if (depPattern && arrPattern) {
-          synchronizedFlights = await Flight.find({
-            departureLocation: { $regex: depPattern },
-            arrivalLocation:   { $regex: arrPattern }
-          });
-          console.log(`📍 Found ${synchronizedFlights.length} flights by location name`);
-        }
-      }
+      synchronizedFlights = allRouteFlights.filter(f => 
+        toISTDateString(f.departureTime) === targetDate
+      );
       source = "mongodb";
     }
 
     if (synchronizedFlights.length === 0) {
-      console.log("🌱 No data found — seeding dummy flights...");
-      synchronizedFlights = await seedDummyFlights(fromUpper, toUpper, date);
+      console.log(`🌱 Seeding dummy flights for ${targetDate}...`);
+      synchronizedFlights = await seedDummyFlights(fromUpper, toUpper, targetDate);
       source = "seeded_dummy";
     }
 
-    if (date && synchronizedFlights.length > 0) {
-      const filtered = synchronizedFlights.filter(f => {
-        if (!f.departureTime) return true; 
-        try {
-          return toISTDateString(f.departureTime) === date;
-        } catch {
-          return true;
-        }
-      });
-
-      if (filtered.length > 0) {
-        synchronizedFlights = filtered;
-      } else {
-        synchronizedFlights = [];
-      }
+    if (date) {
+      synchronizedFlights = synchronizedFlights.filter(f => 
+        toISTDateString(f.departureTime) === date
+      );
     }
 
     console.log(`✅ Returning ${synchronizedFlights.length} flights (source: ${source})`);
