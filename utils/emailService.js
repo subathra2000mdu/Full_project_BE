@@ -9,9 +9,9 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const createTransporter = () =>
   nodemailer.createTransport({
     host:   'smtp.gmail.com',
-    port:   587,
-    secure: false,
-    requireTLS: true,
+    port:   465,
+    secure: true,
+    //requireTLS: true,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
@@ -21,11 +21,12 @@ const createTransporter = () =>
     // Without this, nodemailer picks the IPv6 address returned by DNS
     // and gets ENETUNREACH because Render can't reach it.
     family: 4,
-    connectionTimeout: 15000,
-    greetingTimeout:   15000,
-    socketTimeout:     30000,
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 30000,
     tls: {
       rejectUnauthorized: false,
+      minVersion: 'TLSv1.2'
     },
   });
 
