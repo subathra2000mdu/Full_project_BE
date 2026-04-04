@@ -24,9 +24,9 @@ const createTransporter = () =>
     },
     // 3. Keep IPv4 force as a backup
     family: 4, 
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
-    socketTimeout: 30000,
+    connectionTimeout: 60000,
+    greetingTimeout: 60000,
+    socketTimeout: 60000,
   });
 
 // HTML email builder — Logic remains exactly as provided
