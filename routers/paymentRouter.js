@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { createPaymentIntent, confirmPaymentStatus } = require('../controllers/paymentController');
+// Import the names EXACTLY as they are written in the controller
+const { createPaymentIntent, confirmPayment } = require('../controllers/paymentController');
 const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/create-intent', authMiddleware, createPaymentIntent);
-router.post('/confirm', authMiddleware, confirmPaymentStatus);
+
+// Change confirmPaymentStatus to confirmPayment
+router.post('/confirm', authMiddleware, confirmPayment);
 
 module.exports = router;
