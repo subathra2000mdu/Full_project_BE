@@ -5,8 +5,8 @@ const FlightSchema = new mongoose.Schema({
   flightNumber: { type: String, required: true, unique: true }, 
   departureLocation: { type: String, required: true },  
   arrivalLocation: { type: String, required: true },    
-  departureIata: { type: String }, // Stores 'MAA'
-  arrivalIata: { type: String },   // Stores 'BOM'
+  departureIata: { type: String }, 
+  arrivalIata: { type: String },   
   departureTime: { type: Date, required: true },      
   price: { type: Number, default: 5000 },            
   seatsAvailable: { type: Number, default: 75 },   

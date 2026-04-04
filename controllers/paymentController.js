@@ -1,9 +1,6 @@
-// controllers/paymentController.js
-
 const Booking          = require('../models/Booking');
 const sendBookingEmail = require('../utils/emailService');
 
-// ── POST /payments/create-intent ─────────────────────────────────────────────
 exports.createPaymentIntent = async (req, res) => {
   try {
     const { bookingId, amount, currency, paymentMethod } = req.body;
@@ -36,7 +33,7 @@ exports.createPaymentIntent = async (req, res) => {
   }
 };
 
-// ── POST /payments/confirm ────────────────────────────────────────────────────
+
 exports.confirmPayment = async (req, res) => {
   try {
     const { bookingId } = req.body;
@@ -55,7 +52,6 @@ exports.confirmPayment = async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Send confirmation email — fire-and-forget, never blocks response
     const recipientEmail = booking.passengerDetails?.email;
     if (recipientEmail) {
       sendBookingEmail(recipientEmail, booking)

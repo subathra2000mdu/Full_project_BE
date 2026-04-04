@@ -1,12 +1,5 @@
-// utils/emailService.js
-// FINAL FIX: Render free tier BLOCKS all outbound SMTP (ports 465 & 587).
-// Solution: Use Brevo (ex-Sendinblue) HTTP API over port 443 — never blocked.
-// Free tier: 300 emails/day. Sign up at https://app.brevo.com
-// Get API key: Brevo dashboard → SMTP & API → API Keys → Generate
-
 const https = require('https');
 
-// Build email HTML (same as before)
 const buildEmailHTML = (booking, isCancel = false) => {
   const passenger = booking.passengerDetails?.name   || 'Passenger';
   const email     = booking.passengerDetails?.email  || '';
@@ -111,7 +104,6 @@ const buildEmailHTML = (booking, isCancel = false) => {
 </html>`;
 };
 
-// Send via Brevo HTTP API — uses HTTPS port 443, never blocked by Render
 const sendViaBrevo = (mailOptions) => {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({
@@ -161,7 +153,6 @@ const sendViaBrevo = (mailOptions) => {
   });
 };
 
-// Main export — same interface, no changes needed in controllers
 const sendBookingEmail = async (toEmail, booking) => {
   if (!process.env.BREVO_API_KEY) {
     console.error('❌ [Email] BREVO_API_KEY not set in Render environment variables');
@@ -207,7 +198,6 @@ const sendBookingEmail = async (toEmail, booking) => {
   try {
     await sendViaBrevo(mailOptions);
   } catch (err) {
-    // Never crash the API — just log
     console.error('❌ [Email] Failed to send:', err.message);
   }
 };

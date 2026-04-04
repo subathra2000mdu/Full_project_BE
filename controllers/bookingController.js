@@ -1,17 +1,12 @@
-// controllers/bookingController.js
-// Requires emailService from:  ../utils/emailService
-// Email is sent when paymentStatus is set to 'Cancelled' via PATCH /update/:id
-
 const { jsPDF } = require("jspdf");
-const autoTable = require("jspdf-autotable").default; // patches jsPDF prototype → call doc.autoTable()
+const autoTable = require("jspdf-autotable").default; 
 const Booking          = require('../models/Booking');
 const Flight           = require('../models/Flight');
-const sendBookingEmail = require('../utils/emailService'); // ← correct path
+const sendBookingEmail = require('../utils/emailService'); 
 
 const generateBookingRef = () =>
   Math.random().toString(36).substring(2, 8).toUpperCase();
 
-// ── POST /reserve ─────────────────────────────────────────────────────────────
 const createBooking = async (req, res) => {
   try {
     const {
@@ -81,11 +76,7 @@ const createBooking = async (req, res) => {
   }
 };
 
-// ── PATCH /update/:id ─────────────────────────────────────────────────────────
-// Called for:
-//   - paymentStatus: 'Completed'  → from paymentController after payment confirm
-//   - paymentStatus: 'Cancelled'  → from HomePage Cancel Ticket button
-// Email is sent for BOTH statuses via utils/emailService.js
+
 const updateBooking = async (req, res) => {
   try {
     const { paymentStatus } = req.body;
@@ -100,7 +91,6 @@ const updateBooking = async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Send cancellation email (fire-and-forget — never blocks response)
     const recipientEmail = booking.passengerDetails?.email;
     if (recipientEmail && (paymentStatus === 'Completed' || paymentStatus === 'Cancelled')) {
       sendBookingEmail(recipientEmail, booking)
@@ -118,7 +108,7 @@ const updateBooking = async (req, res) => {
   }
 };
 
-// ── GET /my-history ───────────────────────────────────────────────────────────
+
 const getMyBookings = async (req, res) => {
   try {
     const userId   = req.user?.id || req.user?._id;
@@ -132,7 +122,7 @@ const getMyBookings = async (req, res) => {
   }
 };
 
-// ── DELETE /cancel/:id ────────────────────────────────────────────────────────
+
 const cancelBooking = async (req, res) => {
   try {
     const booking = await Booking.findByIdAndDelete(req.params.id);
@@ -143,7 +133,7 @@ const cancelBooking = async (req, res) => {
   }
 };
 
-// ── Stats ─────────────────────────────────────────────────────────────────────
+
 const getBookingStats = async (req, res) => {
   try {
     const total = await Booking.countDocuments();

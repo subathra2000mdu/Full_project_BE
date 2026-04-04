@@ -11,7 +11,7 @@ const {
 
 const authMiddleware = require('../middleware/authMiddleware'); 
 
-// All routes use authMiddleware to ensure req.user exists
+
 router.post('/reserve', authMiddleware, createBooking); 
 router.get('/my-history', authMiddleware, getMyBookings);
 router.delete('/cancel/:id', authMiddleware, cancelBooking);
