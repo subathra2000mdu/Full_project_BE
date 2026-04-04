@@ -14,30 +14,80 @@ const logActivity = async (data) => {
 };
 
 // Logic for POST /reserve
+// controllers/bookingController.js
+
 const createBooking = async (req, res) => {
   try {
-    const { flightId, passengerDetails, passengers } = req.body;
+    // 1. Extract all possible fields from req.body
+    const { 
+      flightId, 
+      passengerDetails, 
+      passengers, 
+      seatPreference, 
+      bookingClass 
+    } = req.body;
+
+    // 2. Identify the User
     const userId = req.user?.id || req.user?._id;
 
-    const flight = await Flight.findById(flightId);
-    if (!flight || flight.seatsAvailable < 1) {
-      return res.status(400).json({ message: 'Flight unavailable' });
+    // 3. Validation: Ensure we have a flight and passenger info
+    if (!flightId) {
+      return res.status(400).json({ message: 'Flight ID is required' });
+    }
+    if (!passengerDetails || !passengerDetails.name || !passengerDetails.email) {
+      return res.status(400).json({ message: 'Passenger name and email are required' });
     }
 
-    flight.seatsAvailable -= (Number(passengers) || 1);
+    // 4. Find the flight and check seat availability
+    const flight = await Flight.findById(flightId);
+    if (!flight) {
+      return res.status(404).json({ message: 'Flight not found' });
+    }
+
+    const requestedSeats = Number(passengers) || 1;
+    if (flight.seatsAvailable < requestedSeats) {
+      return res.status(400).json({ message: 'Not enough seats available' });
+    }
+
+    // 5. Update flight seats (Save to DB)
+    flight.seatsAvailable = Math.max(0, flight.seatsAvailable - requestedSeats);
     await flight.save();
 
+    // 6. Create the Booking with ALL required schema fields
     const booking = await Booking.create({
       user: userId,
       flight: flightId,
-      passengerDetails,
+      passengerDetails: {
+        name: passengerDetails.name.trim(),
+        email: passengerDetails.email.trim().toLowerCase(),
+      },
+      passengers: requestedSeats,
+      // Provide defaults so the DB doesn't reject the save
+      seatPreference: seatPreference || 'Window',
+      bookingClass: bookingClass || 'Economy',
       bookingReference: generateBookingRef(),
-      paymentStatus: 'Pending'
+      paymentStatus: 'Pending',
+    });
+
+    // 7. Populate flight details so the frontend has the data immediately
+    await booking.populate('flight');
+
+    // 8. Log the activity (Optional but recommended)
+    await logActivity({
+      userId,
+      bookingId: booking._id,
+      action: 'Created',
+      details: { passengerName: passengerDetails.name, flightNumber: flight.flightNumber },
     });
 
     return res.status(201).json(booking);
+
   } catch (err) {
-    return res.status(500).json({ message: 'Reservation failed', error: err.message });
+    console.error('[createBooking Error]:', err.message);
+    return res.status(500).json({ 
+      message: 'Internal Server Error during reservation', 
+      error: err.message 
+    });
   }
 };
 
