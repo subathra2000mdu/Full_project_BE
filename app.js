@@ -39,7 +39,7 @@ app.get('/ping', (req, res) => res.status(200).send('pong'));
 //   - Your Netlify frontend (set FRONTEND_URL in Render env vars)
 //   - localhost:3000 and localhost:5173 for local development
 const allowedOrigins = [
-  'https://theflightbooking.netlify.app/',       // e.g. https://your-site.netlify.app
+  'https://theflightbooking.netlify.app',       // e.g. https://your-site.netlify.app
   //'http://localhost:3000',
   //'http://localhost:5173',
   //'http://localhost:3001',
