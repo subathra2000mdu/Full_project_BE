@@ -16,29 +16,40 @@ const logActivity = async (data) => {
 // Logic for POST /reserve
 // controllers/bookingController.js
 
+// controllers/bookingController.js
+
 const createBooking = async (req, res) => {
   try {
-    // 1. Extract all possible fields from req.body
+    // 1. Destructure everything sent from the frontend
     const { 
       flightId, 
-      passengerDetails, 
+      passengerDetails, // for nested objects
+      passengerName,    // from your React formData
+      passengerEmail,   // from your React formData
       passengers, 
       seatPreference, 
       bookingClass 
     } = req.body;
 
-    // 2. Identify the User
     const userId = req.user?.id || req.user?._id;
 
-    // 3. Validation: Ensure we have a flight and passenger info
+    // 2. Resolve the name and email (checks both formats)
+    const finalName = passengerName || passengerDetails?.name;
+    const finalEmail = passengerEmail || passengerDetails?.email;
+
+    // 3. Strict Validation
     if (!flightId) {
       return res.status(400).json({ message: 'Flight ID is required' });
     }
-    if (!passengerDetails || !passengerDetails.name || !passengerDetails.email) {
-      return res.status(400).json({ message: 'Passenger name and email are required' });
+    
+    if (!finalName || !finalEmail) {
+      return res.status(400).json({ 
+        message: 'Passenger name and email are required',
+        received: { finalName, finalEmail } // Helpful for debugging
+      });
     }
 
-    // 4. Find the flight and check seat availability
+    // 4. Find Flight
     const flight = await Flight.findById(flightId);
     if (!flight) {
       return res.status(404).json({ message: 'Flight not found' });
@@ -49,38 +60,33 @@ const createBooking = async (req, res) => {
       return res.status(400).json({ message: 'Not enough seats available' });
     }
 
-    // 5. Update flight seats (Save to DB)
+    // 5. Update Flight Inventory
     flight.seatsAvailable = Math.max(0, flight.seatsAvailable - requestedSeats);
     await flight.save();
 
-    // 6. Create the Booking with ALL required schema fields
+    // 6. Create Booking (matches your MongoDB Schema)
     const booking = await Booking.create({
       user: userId,
       flight: flightId,
       passengerDetails: {
-        name: passengerDetails.name.trim(),
-        email: passengerDetails.email.trim().toLowerCase(),
+        name: finalName.trim(),
+        email: finalEmail.trim().toLowerCase(),
       },
       passengers: requestedSeats,
-      // Provide defaults so the DB doesn't reject the save
       seatPreference: seatPreference || 'Window',
       bookingClass: bookingClass || 'Economy',
       bookingReference: generateBookingRef(),
       paymentStatus: 'Pending',
     });
 
-    // 7. Populate flight details so the frontend has the data immediately
+    // Populate flight info for the response
     await booking.populate('flight');
 
-    // 8. Log the activity (Optional but recommended)
-    await logActivity({
-      userId,
-      bookingId: booking._id,
-      action: 'Created',
-      details: { passengerName: passengerDetails.name, flightNumber: flight.flightNumber },
+    // 7. Success Response
+    return res.status(201).json({
+      message: "Booking reserved successfully",
+      itinerary: booking // Ensure this matches your frontend 'response.data.itinerary' check
     });
-
-    return res.status(201).json(booking);
 
   } catch (err) {
     console.error('[createBooking Error]:', err.message);
