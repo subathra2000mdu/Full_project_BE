@@ -1,237 +1,279 @@
 // controllers/bookingController.js
-//
-// KEY FIXES:
-//   1. updateBooking now sends email for BOTH 'Completed' AND 'Cancelled' status
-//   2. Email is fired non-blocking (fire-and-forget with .catch) so a failed
-//      email never blocks or crashes the API response
-//   3. History log created on cancellation so Activity Logs show it
-//   4. downloadItinerary uses today's date (reliable) not stored booking date
+// ─────────────────────────────────────────────────────────────────────────────
+// Handles all booking operations:
+//   POST   /api/auth/bookings/reserve        — create new booking
+//   GET    /api/auth/bookings/my-history      — get user's bookings
+//   PATCH  /api/bookings/update/:id           — update booking (cancel)
+//   GET    /api/bookings/download/:id         — download PDF receipt
+//   DELETE /api/bookings/delete/:id           — delete a booking
+// ─────────────────────────────────────────────────────────────────────────────
 
-const { jsPDF }        = require("jspdf");
-const autoTable        = require("jspdf-autotable").default;
-const Booking          = require('../models/Booking');
-const History          = require('../models/History');
-const sendBookingEmail = require('../utils/emailService');
+const Booking      = require('../models/Booking');
+const Flight       = require('../models/Flight');
+const ActivityLog  = require('../models/ActivityLog');
+const sendEmail    = require('../utils/sendEmail');
+const { cancellationEmail } = require('../utils/emailTemplates');
 
-// ── Create / Reserve Booking ──────────────────────────────────────────────────
-exports.createBooking = async (req, res) => {
+// jsPDF for PDF generation
+const { jsPDF }     = require('jspdf');
+require('jspdf-autotable');
+
+// ── Helper: generate booking reference ──────────────────────────────────────
+const generateBookingRef = () =>
+  Math.random().toString(36).substring(2, 8).toUpperCase();
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/auth/bookings/reserve
+// ────────────────────────────────────────────────────────────────────────────
+const reserveFlight = async (req, res) => {
   try {
-    const { flightId, passengerName, passengerEmail, seatPreference } = req.body;
+    const { flightId, passengerDetails, seatPreference, passengers, bookingClass } = req.body;
+    const userId = req.user?.id || req.user?._id;
 
-    const newBooking = new Booking({
-      user:  req.user.id,
-      flight: flightId,
+    if (!flightId || !passengerDetails?.name || !passengerDetails?.email) {
+      return res.status(400).json({ message: 'flightId, passenger name and email are required' });
+    }
+
+    const flight = await Flight.findById(flightId);
+    if (!flight) {
+      return res.status(404).json({ message: 'Flight not found' });
+    }
+    if (flight.seatsAvailable < 1) {
+      return res.status(400).json({ message: 'No seats available on this flight' });
+    }
+
+    // Decrement seat count
+    flight.seatsAvailable = Math.max(0, flight.seatsAvailable - (passengers || 1));
+    await flight.save();
+
+    const booking = await Booking.create({
+      user:             userId,
+      flight:           flightId,
       passengerDetails: {
-        name:  passengerName  || req.user.name,
-        email: passengerEmail || req.user.email,
+        name:  passengerDetails.name.trim(),
+        email: passengerDetails.email.trim().toLowerCase(),
       },
-      seatPreference,
+      seatPreference:   seatPreference || 'Window',
+      passengers:       passengers     || 1,
+      bookingClass:     bookingClass   || 'Economy',
+      paymentStatus:    'Pending',
+      bookingReference: generateBookingRef(),
     });
 
-    await newBooking.save();
+    // Populate flight for the response
+    await booking.populate('flight');
 
-    await History.create({
-      userId:    req.user.id,
-      bookingId: newBooking._id,
+    // Log activity
+    await ActivityLog.create({
+      userId:    userId,
+      bookingId: booking._id,
       action:    'Created',
-      details:   { status: 'Pending' },
-    });
+      details: {
+        passengerName: passengerDetails.name,
+        flightNumber:  flight.flightNumber,
+        status:        'Pending',
+      },
+    }).catch(e => console.warn('[reserveFlight] ActivityLog error:', e.message));
 
-    const confirmed = await Booking.findById(newBooking._id).populate('flight');
-    res.status(201).json({ message: "Reservation Successful", itinerary: confirmed });
-
+    return res.status(201).json(booking);
   } catch (err) {
-    console.error("Create Booking Error:", err);
-    res.status(400).json({ message: "Booking Failed", error: err.message });
+    console.error('[reserveFlight] Error:', err.message);
+    return res.status(500).json({ message: 'Reservation failed', error: err.message });
   }
 };
 
-// ── Update Booking Status + Send Email ────────────────────────────────────────
-// Called for BOTH payment confirmation (Completed) and cancellation (Cancelled).
-// Email is fired non-blocking so a transient SMTP failure never affects
-// the HTTP response the frontend is waiting for.
-exports.updateBooking = async (req, res) => {
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/auth/bookings/my-history
+// ────────────────────────────────────────────────────────────────────────────
+const getMyHistory = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const bookings = await Booking.find({ user: userId })
+      .populate('flight')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(bookings);
+  } catch (err) {
+    console.error('[getMyHistory] Error:', err.message);
+    return res.status(500).json({ message: 'Failed to fetch history', error: err.message });
+  }
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// PATCH /api/bookings/update/:id
+// Used for cancellation — sends cancellation email
+// ────────────────────────────────────────────────────────────────────────────
+const updateBooking = async (req, res) => {
   try {
     const { id }            = req.params;
     const { paymentStatus } = req.body;
 
-    const updatedBooking = await Booking.findByIdAndUpdate(
-      id,
-      { paymentStatus },
-      { new: true }
-    ).populate('flight');
-
-    if (!updatedBooking) {
-      return res.status(404).json({ message: "Booking not found" });
+    const booking = await Booking.findById(id).populate('flight');
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // ── Log the status change to History ──────────────────────────────────────
-    await History.create({
-      userId:    req.user?.id || updatedBooking.user,
-      bookingId: updatedBooking._id,
-      action:    paymentStatus === 'Cancelled' ? 'Cancelled' : 'Updated',
-      details:   { status: paymentStatus },
-    }).catch(err => console.warn('History log failed:', err.message));
-    // .catch so a failed history write never blocks the response
+    const previousStatus = booking.paymentStatus;
+    booking.paymentStatus = paymentStatus || booking.paymentStatus;
+    await booking.save();
 
-    // ── Send email for BOTH Completed AND Cancelled ───────────────────────────
-    const recipientEmail =
-      updatedBooking.passengerDetails?.email ||
-      req.user?.email;
+    console.log(`[updateBooking] Booking ${id} status: ${previousStatus} → ${booking.paymentStatus}`);
 
-    if (recipientEmail) {
-      // Fire-and-forget: non-blocking, errors logged but don't throw
-      sendBookingEmail(recipientEmail, updatedBooking)
-        .catch(err => console.error('[email] fire-and-forget error:', err.message));
-    } else {
-      console.warn('[email] No recipient email found for booking:', id);
+    // ── If this update is a CANCELLATION, send cancellation email ───────────
+    if (paymentStatus === 'Cancelled' && previousStatus !== 'Cancelled') {
+      const passengerEmail = booking.passengerDetails?.email;
+
+      if (passengerEmail) {
+        // Calculate refund (default 50% if no env var set)
+        const cancellationRate = parseFloat(process.env.CANCELLATION_RATE || '50');
+        const paidAmount       = booking.flight?.price || 0;
+        const refundAmount     = Math.round(paidAmount * (cancellationRate / 100));
+
+        const { subject, html } = cancellationEmail({
+          passengerName:    booking.passengerDetails?.name    || 'Passenger',
+          bookingReference: booking.bookingReference          || id.slice(-8).toUpperCase(),
+          airline:          booking.flight?.airline           || 'N/A',
+          flightNumber:     booking.flight?.flightNumber      || 'N/A',
+          from:             booking.flight?.departureLocation || 'N/A',
+          to:               booking.flight?.arrivalLocation   || 'N/A',
+          paidAmount,
+          refundAmount,
+          cancellationRate,
+        });
+
+        // Fire and forget — email failure won't block the 200 response
+        sendEmail({ to: passengerEmail, subject, html })
+          .then(() => {
+            console.log(`[updateBooking] ✅ Cancellation email sent to ${passengerEmail}`);
+          })
+          .catch((emailErr) => {
+            console.error(`[updateBooking] ❌ Cancellation email failed for ${passengerEmail}:`, emailErr.message);
+          });
+
+        // Restore one seat to the flight
+        if (booking.flight?._id) {
+          await Flight.findByIdAndUpdate(booking.flight._id, {
+            $inc: { seatsAvailable: booking.passengers || 1 }
+          });
+        }
+      }
+
+      // Log cancellation activity
+      await ActivityLog.create({
+        userId:    booking.user,
+        bookingId: booking._id,
+        action:    'Cancelled',
+        details: {
+          passengerName: booking.passengerDetails?.name,
+          flightNumber:  booking.flight?.flightNumber,
+          status:        'Cancelled',
+        },
+      }).catch(e => console.warn('[updateBooking] ActivityLog error:', e.message));
     }
 
-    res.status(200).json({
-      message:        `Update successful. Email queued for status: ${paymentStatus}`,
-      updatedBooking,
-    });
-
+    return res.status(200).json({ message: 'Booking updated successfully', booking });
   } catch (err) {
-    console.error("Update Booking Error:", err);
-    res.status(500).json({ message: "Update failed", error: err.message });
+    console.error('[updateBooking] Error:', err.message);
+    return res.status(500).json({ message: 'Update failed', error: err.message });
   }
 };
 
-// ── Get My Bookings ───────────────────────────────────────────────────────────
-exports.getMyBookings = async (req, res) => {
-  try {
-    const bookings = await Booking
-      .find({ user: req.user.id })
-      .populate('flight')
-      .sort({ createdAt: -1 });
-    res.status(200).json(bookings);
-  } catch (err) {
-    console.error("Get Bookings Error:", err);
-    res.status(500).json({ message: "Fetch Failed", error: err.message });
-  }
-};
-
-// ── Cancel Booking (hard delete) ──────────────────────────────────────────────
-exports.cancelBooking = async (req, res) => {
-  try {
-    const bookingId      = req.params.id;
-    const deletedBooking = await Booking.findByIdAndDelete(bookingId);
-    if (!deletedBooking) {
-      return res.status(404).json({ message: "Booking not found" });
-    }
-    res.status(200).json({
-      message:     "Booking cancelled successfully",
-      cancelledId: bookingId,
-    });
-  } catch (err) {
-    console.error("Cancel Booking Error:", err);
-    res.status(500).json({ message: "Cancellation Failed", error: err.message });
-  }
-};
-
-// ── Booking Stats ─────────────────────────────────────────────────────────────
-exports.getBookingStats = async (req, res) => {
-  try {
-    const total = await Booking.countDocuments();
-    res.status(200).json({ totalBookings: total });
-  } catch (err) {
-    console.error("Stats Error:", err);
-    res.status(500).json({ message: "Stats Failed", error: err.message });
-  }
-};
-
-// ── Download PDF Itinerary ────────────────────────────────────────────────────
-exports.downloadItinerary = async (req, res) => {
+// ────────────────────────────────────────────────────────────────────────────
+// GET /api/bookings/download/:id
+// Generate and return PDF receipt
+// ────────────────────────────────────────────────────────────────────────────
+const downloadReceipt = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id).populate('flight');
     if (!booking) {
-      return res.status(404).json({ message: "Booking not found" });
+      return res.status(404).json({ message: 'Booking not found' });
     }
 
     const doc = new jsPDF();
 
-    // Header blue bar
-    doc.setFillColor(37, 99, 235);
-    doc.rect(0, 0, 210, 40, 'F');
+    // Title
+    doc.setFontSize(20);
+    doc.setTextColor(29, 78, 216);
+    doc.text('Flight Booking Receipt', 105, 20, { align: 'center' });
 
-    doc.setFontSize(22);
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.text("FLIGHT ITINERARY", 105, 18, { align: "center" });
-
+    // Subtitle
     doc.setFontSize(11);
-    doc.setFont('helvetica', 'normal');
-    doc.text("Flight Booking & Reservation System", 105, 30, { align: "center" });
+    doc.setTextColor(100, 116, 139);
+    doc.text('Flight Booking & Reservation System', 105, 28, { align: 'center' });
 
-    // Booking reference badge
-    doc.setFillColor(239, 246, 255);
-    doc.roundedRect(14, 48, 182, 14, 4, 4, 'F');
-    doc.setFontSize(11);
-    doc.setTextColor(37, 99, 235);
-    doc.setFont('helvetica', 'bold');
-    doc.text(
-      `Booking Reference: ${booking.bookingReference || booking._id.toString().slice(-8).toUpperCase()}`,
-      105, 57, { align: "center" }
-    );
+    // Divider
+    doc.setDrawColor(29, 78, 216);
+    doc.setLineWidth(0.5);
+    doc.line(20, 32, 190, 32);
 
-    // Table data
-    const tableData = [
-      ["Passenger Name",  booking.passengerDetails?.name          || "N/A"],
-      ["Passenger Email", booking.passengerDetails?.email         || "N/A"],
-      ["Airline",         booking.flight?.airline                  || "N/A"],
-      ["Flight No",       booking.flight?.flightNumber             || "N/A"],
-      ["From",            booking.flight?.departureLocation        || "N/A"],
-      ["To",              booking.flight?.arrivalLocation          || "N/A"],
-      ["Fare Amount",     `INR ${Number(booking.flight?.price || 0).toLocaleString('en-IN')}`],
-      ["Seat Preference", booking.seatPreference                   || "N/A"],
-      ["Payment Status",  (booking.paymentStatus || "Pending").toUpperCase()],
-      // Always use today — the date the PDF was generated
-      ["Confirmed On",    new Date().toLocaleDateString('en-GB', {
-        day: '2-digit', month: 'short', year: 'numeric'
-      })],
-    ];
-
-    autoTable(doc, {
-      startY:     70,
-      head:       [["Description", "Details"]],
-      body:       tableData,
-      theme:      "striped",
-      headStyles: {
-        fillColor: [37, 99, 235],
-        textColor: [255, 255, 255],
-        fontSize:  12,
-        fontStyle: "bold",
-      },
-      bodyStyles: {
-        fontSize:    11,
-        cellPadding: 6,
-      },
-      alternateRowStyles: { fillColor: [239, 246, 255] },
-      columnStyles: { 0: { fontStyle: "bold", cellWidth: 70 } },
+    // Booking details table
+    doc.autoTable({
+      startY: 38,
+      head: [['Field', 'Details']],
+      body: [
+        ['Booking Reference', booking.bookingReference || booking._id.toString().slice(-8).toUpperCase()],
+        ['Payment Status',    booking.paymentStatus    || 'N/A'],
+        ['Passenger Name',    booking.passengerDetails?.name  || 'N/A'],
+        ['Email',             booking.passengerDetails?.email || 'N/A'],
+        ['Seat Preference',   booking.seatPreference          || 'N/A'],
+        ['Booking Class',     booking.bookingClass            || 'Economy'],
+        ['Passengers',        String(booking.passengers       || 1)],
+        ['Airline',           booking.flight?.airline         || 'N/A'],
+        ['Flight Number',     booking.flight?.flightNumber    || 'N/A'],
+        ['Route',             `${booking.flight?.departureLocation || 'N/A'} → ${booking.flight?.arrivalLocation || 'N/A'}`],
+        ['Departure',         booking.flight?.departureTime
+          ? new Date(booking.flight.departureTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+          : 'N/A'
+        ],
+        ['Amount Paid',       `Rs. ${(booking.flight?.price || 0).toLocaleString('en-IN')}`],
+        ['Booking Date',      new Date(booking.createdAt).toLocaleDateString('en-IN')],
+      ],
+      headStyles: { fillColor: [29, 78, 216], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { fontSize: 11, cellPadding: 5 },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 55 } },
     });
 
     // Footer note
-    const finalY = doc.lastAutoTable?.finalY || 170;
-    doc.setFontSize(9);
+    const finalY = doc.lastAutoTable.finalY + 12;
+    doc.setFontSize(10);
     doc.setTextColor(148, 163, 184);
-    doc.setFont('helvetica', 'italic');
-    doc.text(
-      "This is a computer-generated document. No signature is required.",
-      105, finalY + 16, { align: "center" }
-    );
+    doc.text('Thank you for booking with us. Have a safe flight!', 105, finalY, { align: 'center' });
 
-    // Send PDF response
-    const pdfOutput = doc.output("arraybuffer");
-    const filename  = `itinerary_${booking.bookingReference || booking._id}.pdf`;
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', pdfOutput.byteLength);
-    res.send(Buffer.from(pdfOutput));
-
+    // Stream PDF as response
+    const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${booking.bookingReference || booking._id}.pdf"`,
+      'Content-Length':      pdfBuffer.length,
+    });
+    return res.send(pdfBuffer);
   } catch (err) {
-    console.error("PDF Generation Error:", err);
-    res.status(500).json({ message: "PDF Generation Failed", error: err.message });
+    console.error('[downloadReceipt] Error:', err.message);
+    return res.status(500).json({ message: 'Could not generate PDF', error: err.message });
   }
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// DELETE /api/bookings/delete/:id
+// ────────────────────────────────────────────────────────────────────────────
+const deleteBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndDelete(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    return res.status(200).json({ message: 'Booking deleted successfully' });
+  } catch (err) {
+    console.error('[deleteBooking] Error:', err.message);
+    return res.status(500).json({ message: 'Delete failed', error: err.message });
+  }
+};
+
+module.exports = {
+  reserveFlight,
+  getMyHistory,
+  updateBooking,
+  downloadReceipt,
+  deleteBooking,
 };
