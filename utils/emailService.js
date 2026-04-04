@@ -1,7 +1,6 @@
 // utils/emailService.js
-// FINAL FIX — port 587 + STARTTLS + rejectUnauthorized:false
-// Port 465 (SSL) is often blocked by Render's network.
-// Port 587 (STARTTLS) works reliably on Render free tier.
+// FIX: ENETUNREACH on Render = IPv6 being used, Render free tier blocks IPv6.
+// Solution: family:4 forces IPv4. This is the ONLY change needed.
 
 const nodemailer = require('nodemailer');
 
@@ -10,23 +9,27 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const createTransporter = () =>
   nodemailer.createTransport({
     host:   'smtp.gmail.com',
-    port:   587,        // STARTTLS — works on Render (465 SSL is often blocked)
-    secure: false,      // false for 587, true only for 465
-    requireTLS: true,   // force STARTTLS upgrade
+    port:   587,
+    secure: false,
+    requireTLS: true,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    // ✅ THIS IS THE FIX — forces IPv4 instead of IPv6
+    // Render free tier blocks IPv6 (2607:f8b0:... addresses)
+    // Without this, nodemailer picks the IPv6 address returned by DNS
+    // and gets ENETUNREACH because Render can't reach it.
+    family: 4,
     connectionTimeout: 15000,
     greetingTimeout:   15000,
     socketTimeout:     30000,
     tls: {
       rejectUnauthorized: false,
-      ciphers: 'SSLv3',
     },
   });
 
-// HTML email builder
+// HTML email builder — unchanged from your existing code
 const buildEmailHTML = (booking, isCancel = false) => {
   const status    = (booking.paymentStatus || 'Pending').toUpperCase();
   const passenger = booking.passengerDetails?.name           || 'Passenger';
@@ -162,7 +165,7 @@ const sendWithRetry = async (mailOptions, attempts = 3, delayMs = 3000) => {
   throw lastError;
 };
 
-// Main export
+// Main export — unchanged interface, same as your existing code
 const sendBookingEmail = async (toEmail, booking) => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.error('❌ EMAIL_USER / EMAIL_PASS not set in environment variables');
@@ -206,7 +209,7 @@ const sendBookingEmail = async (toEmail, booking) => {
   try {
     await sendWithRetry(mailOptions, 3, 3000);
   } catch (err) {
-    // Log but never throw — email failure must not crash the API response
+    // Never throw — email failure must not crash the API response
     console.error('❌ All email retries failed:', err.message);
   }
 };
