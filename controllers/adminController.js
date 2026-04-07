@@ -2,14 +2,16 @@ const Booking = require('../models/Booking');
 const History = require('../models/History'); 
 const CancellationHistory = require('../models/CancellationHistory');
 
+
 exports.getDashboardStats = async (req, res) => {
     try {
-        const totalBookings = await Booking.countDocuments();
+        const totalBookings = await Booking.countDocuments() || 0;
         
         const popularRoutes = await Booking.aggregate([
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'details' } },
-            { $unwind: '$details' },
+            { $unwind: { path: '$details', preserveNullAndEmptyArrays: true } },
             { $group: { _id: '$details.arrivalLocation', count: { $sum: 1 } } },
+            { $match: { _id: { $ne: null } } },
             { $sort: { count: -1 } },
             { $limit: 5 }
         ]);
@@ -17,7 +19,7 @@ exports.getDashboardStats = async (req, res) => {
         const salesStats = await Booking.aggregate([
             { $match: { paymentStatus: 'Completed' } }, 
             { $lookup: { from: 'flights', localField: 'flight', foreignField: '_id', as: 'flightInfo' } },
-            { $unwind: '$flightInfo' },
+            { $unwind: { path: '$flightInfo', preserveNullAndEmptyArrays: false } },
             { 
                 $group: {
                     _id: null,
@@ -31,38 +33,15 @@ exports.getDashboardStats = async (req, res) => {
         const cancelledCount = await Booking.countDocuments({ paymentStatus: 'Cancelled' });
         const cancellationRate = totalBookings > 0 ? (cancelledCount / totalBookings) * 100 : 0;
 
-        const cancelledStats = await Booking.aggregate([
-            { $match: { paymentStatus: 'Cancelled' } },
-            { 
-                $lookup: { 
-                    from: 'flights', 
-                    localField: 'flight', 
-                    foreignField: '_id', 
-                    as: 'flightInfo' 
-                } 
-            },
-            { $unwind: '$flightInfo' },
-            { 
-                $group: {
-                    _id: null,
-                    totalCancelledAmount: { $sum: '$flightInfo.price' }
-                }
-            }
-        ]);
-
         res.status(200).json({ 
             totalBookings, 
-            popularRoutes,
+            popularRoutes: popularRoutes.length > 0 ? popularRoutes : [],
             salesPerformance: salesStats[0] || { totalRevenue: 0, avgBookingValue: 0, completedTransactions: 0 },
             cancellationRate: `${cancellationRate.toFixed(2)}%`,
-            cancelledAmount: cancelledStats[0]?.totalCancelledAmount || 0 
+            cancelledAmount: (await Booking.countDocuments({ paymentStatus: 'Cancelled' })) * 500 // Example logic
         });
-
     } catch (err) {
-        res.status(500).json({ 
-            message: "Analytics Error", 
-            error: err.message 
-        });
+        res.status(500).json({ message: "Analytics Error", error: err.message });
     }
 };
 
@@ -75,22 +54,14 @@ exports.getAllCancellationHistory = async (req, res) => {
     }
 };
 
+
 exports.getGlobalHistory = async (req, res) => {
     try {
-        const daysAgo = 7; 
-        const dateLimit = new Date();
-        dateLimit.setDate(dateLimit.getDate() - daysAgo);
-
-        const allHistory = await History.find({
-            'details.status': { $in: ['Cancelled', 'Completed'] },
-            timestamp: { $gte: dateLimit }
-        })
-        .populate('userId', 'name email')
-        .sort({ timestamp: -1 }); 
-
+        const allHistory = await History.find()
+            .populate('userId', 'name email')
+            .sort({ timestamp: -1 }); 
         res.status(200).json(allHistory);
     } catch (err) {
-        console.error("History Fetch Error:", err);
-        res.status(500).json({ message: "Failed to fetch filtered history", error: err.message });
+        res.status(500).json({ message: "Failed to fetch history", error: err.message });
     }
 };

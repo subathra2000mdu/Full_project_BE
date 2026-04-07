@@ -1,72 +1,65 @@
-const Booking          = require('../models/Booking');
-const sendBookingEmail = require('../utils/emailService');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const Booking = require('../models/Booking');
+const sendEmail = require('../utils//sendEmail');
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
 exports.createPaymentIntent = async (req, res) => {
   try {
-    const { bookingId, amount, currency, paymentMethod } = req.body;
+    const { amount, bookingId } = req.body;
+    const options = {
+      amount: Math.round(amount * 100), 
+      currency: "INR",
+      receipt: `receipt_${bookingId}`,
+    };
 
-    if (!bookingId || !amount) {
-      return res.status(400).json({ message: 'bookingId and amount are required' });
-    }
-
-    const booking = await Booking.findById(bookingId);
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
-    }
-
-    const clientSecret = `pi_${Math.random().toString(36).substring(2)}_secret_${Date.now()}`;
-
-    console.log(`[PaymentIntent] Created for booking ${bookingId} | Amount: ${amount} ${currency || 'INR'}`);
-
-    return res.status(200).json({
-      clientSecret,
-      bookingId,
-      amount,
-      currency:      currency      || 'INR',
-      paymentMethod: paymentMethod || 'card',
-      status:        'requires_confirmation',
+    const order = await razorpay.orders.create(options);
+    res.status(200).json({
+      success: true,
+      order_id: order.id,
+      amount: order.amount,
+      key_id: process.env.RAZORPAY_KEY_ID
     });
-
-  } catch (err) {
-    console.error('[createPaymentIntent Error]:', err.message);
-    return res.status(500).json({ message: 'Failed to create payment intent', error: err.message });
+  } catch (error) {
+    res.status(500).json({ message: "Order Creation Failed" });
   }
 };
 
-
 exports.confirmPayment = async (req, res) => {
   try {
-    const { bookingId } = req.body;
+    const { bookingId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
-    if (!bookingId) {
-      return res.status(400).json({ message: 'bookingId is required' });
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ message: 'Invalid signature' });
     }
 
-    const booking = await Booking.findByIdAndUpdate(
+    const updatedBooking = await Booking.findByIdAndUpdate(
       bookingId,
-      { paymentStatus: 'Completed' },
+      { paymentStatus: 'Completed', razorpayOrderId: razorpay_order_id },
       { new: true }
     ).populate('flight');
 
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
+    
+    if (updatedBooking?.passengerDetails?.email) {
+      await sendEmail({
+        to: updatedBooking.passengerDetails.email,
+        subject: "Flight Booking Confirmed",
+        text: `Your flight ${updatedBooking.flight.flightNumber} is confirmed. Enjoy your trip!`
+      });
     }
 
-    const recipientEmail = booking.passengerDetails?.email;
-    if (recipientEmail) {
-      sendBookingEmail(recipientEmail, booking)
-        .catch(err => console.error('[email] confirm error:', err.message));
-    }
-
-    console.log(`[PaymentConfirm] Booking ${bookingId} → Completed. Email queued to ${recipientEmail}`);
-
-    return res.status(200).json({
-      message: 'Payment confirmed successfully. Booking confirmation email sent.',
-      booking,
-    });
-
+    res.status(200).json({ message: 'Success', booking: updatedBooking });
   } catch (err) {
-    console.error('[confirmPayment Error]:', err.message);
-    return res.status(500).json({ message: 'Payment confirmation failed', error: err.message });
+    res.status(500).json({ message: 'Server Error' });
   }
 };

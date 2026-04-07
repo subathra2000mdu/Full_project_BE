@@ -2,7 +2,7 @@ const nodemailer = require('nodemailer');
 
 const sendEmail = async ({ to, subject, html, text }) => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('[sendEmail] ⚠️ EMAIL_USER or EMAIL_PASS missing in environment variables — skipping email.');
+    console.warn('EMAIL_USER or EMAIL_PASS missing — skipping email.');
     return { skipped: true };
   }
 
@@ -14,9 +14,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS, 
     },
-    tls: {
-      rejectUnauthorized: false, 
-    },
+    tls: { rejectUnauthorized: false },
   });
 
   const mailOptions = {
@@ -27,18 +25,12 @@ const sendEmail = async ({ to, subject, html, text }) => {
     text: text || '',
   };
 
-  
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`[sendEmail] ✅ Email sent successfully to: ${to}`);
-    console.log(`[sendEmail] 🆔 Message ID: ${info.messageId}`);
+    console.log(`Email sent to: ${to}`);
     return info;
   } catch (err) {
-    console.error('[sendEmail] ❌ Critical Error:');
-    console.error(` - Destination: ${to}`);
-    console.error(` - Error Message: ${err.message}`);
-    console.error(` - Error Code: ${err.code}`);
-    
+    console.error(`Email Error: ${err.message}`);
     throw err;
   }
 };
